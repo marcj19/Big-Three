@@ -27,7 +27,8 @@ async function unwrapCmdShim(shim: string, nodePath: string): Promise<ResolvedCo
   const text = await readFile(shim, 'utf8');
   const m = /"%dp0%\\([^"]+?\.(?:c|m)?js)"/i.exec(text);
   if (!m) throw new Error(`Cannot run ${shim} safely: not a recognised npm shim`);
-  return { file: nodePath, prefixArgs: [path.join(path.dirname(shim), m[1]!)] };
+  // The shim writes Windows separators; splitting on them keeps the result right wherever this runs (and in tests).
+  return { file: nodePath, prefixArgs: [path.join(path.dirname(shim), ...m[1]!.split('\\'))] };
 }
 
 export interface ResolveOptions {
