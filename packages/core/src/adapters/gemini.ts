@@ -1,0 +1,130 @@
+import os from 'node:os';
+import path from 'node:path';
+import type { AgentEvent, Access, AuthStatus, ModelOption, RunRequest } from '../types.js';
+import { CliAdapter, DEFAULT_MODEL, isRecord, num, str, type BuiltInvocation, type Parser } from './base.js';
+
+const MODE: Record<Access, string> = {
+  'read-only': 'plan',
+  edit: 'accept-edits',
+  full: 'auto',
+};
+
+export function parseAgyModels(lines: string[]): ModelOption[] {
+  const models: ModelOption[] = [];
+  for (const line of lines) {
+    const [id, ...rest] = line.split('\t');
+    // Lines without a tab are progress messages ("Fetching available models...").
+    if (!id || rest.length === 0 || !/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(id.trim())) continue;
+    models.push({ id: id.trim(), label: rest.join('\t').trim() || id.trim() });
+  }
+  return models;
+}
+
+/** The whole command line must stay under Windows' ~32k limit; the prompt is passed as an argument (see below). */
+const MAX_PROMPT_CHARS = 24_000;
+
+/**
+ * Gemini through the Antigravity CLI (`agy`). The standalone Gemini CLI now rejects personal Google accounts
+ * ("migrate to the Antigravity suite"), so this is the supported route.
+ *
+ * `agy -p` only accepts the prompt attached to the flag (`-p=<prompt>`), so the prompt travels in argv rather
+ * than stdin. The process is spawned without a shell, so its contents are never interpreted as commands.
+ *
+ * Verified live: plain answers and a tool step. `--mode plan` kept the workspace untouched (the agent only wrote
+ * its own plan document under ~/.gemini/antigravity-cli/brain). Error and permission-denied steps are not observed yet.
+ */
+export class GeminiAdapter extends CliAdapter {
+  readonly id = 'gemini' as const;
+  readonly displayName = 'Gemini (Antigravity)';
+  readonly supportsResume = true;
+  readonly supportsMcp = false;
+  protected readonly binaryName = 'agy';
+  protected readonly installHint = 'Install the Antigravity CLI (agy) and sign in with your Google account.';
+  protected override readonly extraSearchDirs = [path.join(os.homedir(), '.gemini', 'bin')];
+  protected override readonly loginHelp = 'Open a terminal, run `agy` once and sign in with your Google account (or sign in through the Antigravity IDE).';
+
+  /**
+   * `agy models` prints one `id<TAB>label` per line (after a progress line) and costs no quota. The list is the
+   * Antigravity subscription's own, so it can include models from other vendors; the reasoning level is part of the id.
+   */
+  override async listModels(): Promise<ModelOption[]> {
+    const { lines, code } = await this.capture(['models']);
+    return [DEFAULT_MODEL, ...(code === 0 ? parseAgyModels(lines) : [])];
+  }
+
+  protected override async checkAuth(): Promise<AuthStatus> {
+    // `agy models` needs a valid session but does not run a model, so it costs no quota.
+    const { code } = await this.capture(['models']);
+    if (code === null) return { signedIn: 'unknown' };
+    return code === 0 ? { signedIn: true, detail: 'google' } : { signedIn: false };
+  }
+
+  protected build(req: RunRequest): BuiltInvocation {
+    if (req.mcpServers?.length) {
+      // Failing loudly beats silently dropping the database tools the caller asked for.
+      throw new Error('Injecting MCP servers is not supported for Antigravity yet');
+    }
+    const prompt = req.systemPrompt ? `${req.systemPrompt}\n\n${req.prompt}` : req.prompt;
+    if (prompt.length > MAX_PROMPT_CHARS) {
+      throw new Error(`Prompt is ${prompt.length} characters; the Antigravity CLI takes it as an argument and the limit is ${MAX_PROMPT_CHARS}`);
+    }
+    const args = [`-p=${prompt}`, '--output-format', 'stream-json', '--mode', MODE[req.access ?? 'read-only']];
+    if (req.model) args.push('--model', req.model);
+    if (req.sessionId) args.push('--conversation', req.sessionId);
+    return { args, stdin: '' };
+  }
+
+  protected createParser(): Parser {
+    let sessionSeen = false;
+    let assistantText = '';
+    const startedTools = new Set<number>();
+    return (raw) => {
+      if (!isRecord(raw)) return [];
+      const events: AgentEvent[] = [];
+      switch (str(raw.event)) {
+        case 'init': {
+          const id = str(raw.conversation_id);
+          if (id && !sessionSeen) {
+            sessionSeen = true;
+            events.push({ type: 'session', sessionId: id });
+          }
+          break;
+        }
+        case 'step_update': {
+          const step = isRecord(raw.step_update) ? raw.step_update : {};
+          const kind = str(step.step_type);
+          const state = str(step.state);
+          const index = num(step.step_index);
+          if (kind === 'agent_response') {
+            const delta = str(step.text_delta);
+            if (delta) {
+              assistantText += delta;
+              events.push({ type: 'text', text: delta, partial: true });
+            }
+          } else if (kind && kind !== 'user_input') {
+            // Observed live: { step_type: "tool", tool_name: "write_file", tool_info: { name, parameters } }.
+            const info = isRecord(step.tool_info) ? step.tool_info : {};
+            const name = str(step.tool_name) ?? str(info.name) ?? kind;
+            if (index !== undefined && !startedTools.has(index)) {
+              startedTools.add(index);
+              events.push({ type: 'tool_call', name, input: info.parameters });
+            }
+            if (state === 'DONE') events.push({ type: 'tool_result', name, isError: step.error !== undefined && step.error !== null });
+          }
+          break;
+        }
+        case 'result': {
+          const result = isRecord(raw.result) ? raw.result : {};
+          const usage = isRecord(result.usage) ? result.usage : {};
+          events.push({ type: 'usage', inputTokens: num(usage.input_tokens), outputTokens: num(usage.output_tokens) });
+          const status = str(result.status);
+          const ok = status === 'SUCCESS';
+          if (!ok) events.push({ type: 'error', message: `Antigravity finished with status ${status ?? 'unknown'}` });
+          events.push({ type: 'done', status: ok ? 'ok' : 'error', text: (str(result.response) ?? assistantText).trim() || undefined });
+          break;
+        }
+      }
+      return events;
+    };
+  }
+}

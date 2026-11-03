@@ -1,0 +1,43 @@
+{
+  "name": "@aio/db-broker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only database broker exposed to AI models over MCP; credentials never leave this process",
+  "bin": {
+    "aio-db-broker": "./dist/server.js",
+    "aio-db-secret": "./dist/secret-main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/server.ts",
+    "secret": "tsx src/secret-main.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run test/unit",
+    "test:integration": "vitest run test/integration"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@napi-rs/keyring": "^2.1.2",
+    "mysql2": "^3.24.6",
+    "oracledb": "^26.0.0",
+    "pg": "^8.23.1",
+    "pg-cursor": "^2.22.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/oracledb": "^26.0.1",
+    "@types/pg": "^8.23.1",
+    "@types/pg-cursor": "^2.7.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

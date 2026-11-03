@@ -1,0 +1,42 @@
+# Throwaway databases for integration tests. Bound to 127.0.0.1 only, fictional data,
+# credentials that exist nowhere else. Never point the tests at a real database.
+name: aio-db-broker-test
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: admin_pw_test
+      POSTGRES_DB: aio_test
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aio_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: admin_pw_test
+      MYSQL_DATABASE: aio_test
+    ports:
+      - "127.0.0.1:53306:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -padmin_pw_test --silent"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  oracle:
+    image: gvenzl/oracle-free:slim-faststart
+    environment:
+      ORACLE_PASSWORD: admin_pw_test
+    ports:
+      - "127.0.0.1:51521:1521"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 40

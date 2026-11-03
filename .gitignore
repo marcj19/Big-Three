@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+
+# Never commit anything that looks like a credential or a local database profile.
+.env
+.env.*
+!.env.example
+connections.json
+secrets.json
+audit.jsonl

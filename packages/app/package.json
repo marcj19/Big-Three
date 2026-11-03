@@ -1,0 +1,31 @@
+{
+  "name": "@aio/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Desktop app: chat with Claude, Gemini and Codex, run them together in a room, manage database connections",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "prebuild": "npm run build -w @aio/room -w @aio/db-broker",
+    "build": "tsc -p tsconfig.json && node build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.renderer.json",
+    "pretest": "npm run build -w @aio/room -w @aio/db-broker",
+    "test": "vitest run",
+    "start": "npm run build && node scripts/ensure-electron.mjs && electron .",
+    "web": "npm run build && node dist/dev/server.js",
+    "pretypecheck": "npm run build -w @aio/room -w @aio/db-broker"
+  },
+  "dependencies": {
+    "@aio/core": "*",
+    "@aio/db-broker": "*",
+    "@aio/room": "*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "electron": "^45.2.1",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "@aio/room",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared room where Claude, Gemini and Codex take turns on one task, plus the ask_peer MCP server",
+  "bin": {
+    "aio-room-peer": "./dist/peer-main.js"
+  },
+  "scripts": {
+    "prebuild": "npm run build -w @aio/core",
+    "build": "tsc -p tsconfig.json",
+    "predev": "npm run build -w @aio/core",
+    "dev": "tsx src/cli.ts",
+    "pretypecheck": "npm run build -w @aio/core",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "pretest": "npm run build -w @aio/core",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aio/core": "*",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  }
+}

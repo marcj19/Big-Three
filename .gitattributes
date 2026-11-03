@@ -1,0 +1,6 @@
+# Keep line endings stable no matter who clones where.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.png binary
+*.jpg binary

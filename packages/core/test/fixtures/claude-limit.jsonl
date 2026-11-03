@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"lim-1"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1793733600,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false},"uuid":"d782663d","session_id":"lim-1"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"pong"}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"pong","total_cost_usd":0.01,"usage":{"input_tokens":3,"output_tokens":4}}

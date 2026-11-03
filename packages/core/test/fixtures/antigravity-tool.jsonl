@@ -1,0 +1,6 @@
+{"event":"init","conversation_id":"762457ee-0e5d-4f47-93e2-3501546f71d1","init":{"model":"default","cwd":"<cwd>","tools":["write_file"],"permission_mode":"request-review"}}
+{"event":"step_update","step_update":{"conversation_id":"762457ee-0e5d-4f47-93e2-3501546f71d1","step_index":0,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"762457ee-0e5d-4f47-93e2-3501546f71d1","step_index":2,"state":"ACTIVE","step_type":"tool","tool_name":"write_file","tool_info":{"name":"write_file","parameters":{"Path":"C:\\Users\\u\\.gemini\\antigravity-cli\\brain\\x\\implementation_plan.md"}}}}
+{"event":"step_update","step_update":{"conversation_id":"762457ee-0e5d-4f47-93e2-3501546f71d1","step_index":2,"state":"DONE","step_type":"tool","tool_name":"write_file","duration_seconds":1.5,"tool_info":{"name":"write_file","parameters":{"Path":"C:\\Users\\u\\.gemini\\antigravity-cli\\brain\\x\\implementation_plan.md"}}}}
+{"event":"step_update","step_update":{"conversation_id":"762457ee-0e5d-4f47-93e2-3501546f71d1","step_index":3,"state":"ACTIVE","step_type":"agent_response","text_delta":"I have prepared the plan."}}
+{"event":"result","result":{"conversation_id":"762457ee-0e5d-4f47-93e2-3501546f71d1","status":"SUCCESS","response":"I have prepared the plan.\n","usage":{"input_tokens":4745,"output_tokens":600}}}

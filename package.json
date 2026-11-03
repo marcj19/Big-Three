@@ -1,0 +1,39 @@
+{
+  "name": "big-three",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One chat for Claude, Gemini and Codex: pick a model, talk, and it consults the others when it needs to. Includes a read-only database broker.",
+  "license": "MIT",
+  "homepage": "https://github.com/marcj19/Big-Three#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marcj19/Big-Three.git"
+  },
+  "bugs": {
+    "url": "https://github.com/marcj19/Big-Three/issues"
+  },
+  "keywords": [
+    "claude",
+    "gemini",
+    "codex",
+    "antigravity",
+    "mcp",
+    "electron",
+    "ai-agents",
+    "database",
+    "read-only"
+  ],
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "start": "npm run start -w @aio/app",
+    "doctor": "npm run build -w @aio/core --silent && node packages/core/dist/cli.js detect",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
