@@ -43,7 +43,7 @@ and never asks for API keys.
 
 ## Requirements
 
-- **Windows 10 or 11** (developed and tested on Windows 11; macOS and Linux are not tested yet, see
+- **Windows 10 or 11** (developed and used on Windows 11; macOS and Linux are not tried yet, see
   [Platform support](#platform-support)).
 - **[Node.js](https://nodejs.org) 20 or newer.**
 - **At least one of these CLIs, installed and signed in with your own account** (the more, the better the team):
@@ -111,9 +111,10 @@ read-only. Details in [SECURITY.md](SECURITY.md).
 
 ## Platform support
 
-Developed and tested on **Windows 11**. The code avoids Windows-only assumptions where it can (config folders follow each
-platform's convention, and the password vault is cross-platform), but macOS and Linux have not been tried: for example,
-stopping a model on those systems signals only the process it started, not its children. Reports and fixes are welcome.
+Developed and used on **Windows 11**. The automated tests also run on Linux in CI, and the code avoids Windows-only
+assumptions where it can (config folders follow each platform's convention, and the password vault is cross-platform).
+But the app itself (the window, the vault, the model CLIs) has not been tried on macOS or Linux: for example, stopping a
+model there signals only the process it started, not its children. Reports and fixes are welcome.
 
 ## Known limits
 

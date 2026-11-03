@@ -43,7 +43,7 @@ nunca extrai tokens e nunca pede chaves de API.
 
 ## Requisitos
 
-- **Windows 10 ou 11** (desenvolvido e testado no Windows 11; macOS e Linux ainda não foram testados, veja
+- **Windows 10 ou 11** (desenvolvido e usado no Windows 11; macOS e Linux ainda não foram experimentados, veja
   [Suporte a plataformas](#suporte-a-plataformas)).
 - **[Node.js](https://nodejs.org) 20 ou mais novo.**
 - **Pelo menos uma destas CLIs, instalada e com login na sua própria conta** (quanto mais, melhor a equipe):
@@ -113,10 +113,11 @@ quaisquer como você conseguiria lê-lo do mesmo jeito que o intermediário faz.
 
 ## Suporte a plataformas
 
-Desenvolvido e testado no **Windows 11**. O código evita suposições exclusivas do Windows quando pode (as pastas de
-configuração seguem a convenção de cada sistema e o cofre de senhas é multiplataforma), mas macOS e Linux não foram
-testados: por exemplo, para interromper um modelo nesses sistemas só o processo iniciado recebe o sinal, e não os filhos
-dele. Relatos e correções são bem-vindos.
+Desenvolvido e usado no **Windows 11**. Os testes automáticos também rodam no Linux no CI, e o código evita suposições
+exclusivas do Windows quando pode (as pastas de configuração seguem a convenção de cada sistema e o cofre de senhas é
+multiplataforma). Mas o app em si (a janela, o cofre, as CLIs dos modelos) não foi experimentado no macOS nem no Linux: por
+exemplo, para interromper um modelo lá só o processo iniciado recebe o sinal, e não os filhos dele. Relatos e correções
+são bem-vindos.
 
 ## Limites conhecidos
 
