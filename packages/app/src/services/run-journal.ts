@@ -8,8 +8,9 @@ const id = z.string().uuid();
 const provider = z.enum(['claude', 'gemini', 'codex']);
 const storedRun = z.object({ id, conversationId: id, prompt: z.string().max(400), startedAt: z.string(), endedAt: z.string().optional(),
   status: z.enum(['running', 'ok', 'error', 'cancelled']), inputTokens: z.number().nonnegative(), outputTokens: z.number().nonnegative(),
-  entries: z.array(z.object({ id: z.number().int(), at: z.string(), kind: z.enum(['start', 'phase', 'tool', 'consult', 'step', 'finish', 'notice']),
-    provider: provider.optional(), peer: provider.optional(), status: z.enum(['running', 'done', 'error', 'cancelled', 'skipped']), label: z.string(), detail: z.string().optional(), tool: z.string().optional(), stepIndex: z.number().int().optional() })).max(500),
+  previewUrl: z.string().optional(),
+  entries: z.array(z.object({ id: z.number().int(), at: z.string(), kind: z.enum(['start', 'phase', 'tool', 'consult', 'subagent', 'question', 'step', 'finish', 'notice']),
+    provider: provider.optional(), peer: provider.optional(), status: z.enum(['running', 'done', 'error', 'cancelled', 'skipped']), label: z.string(), detail: z.string().optional(), tool: z.string().optional(), stepIndex: z.number().int().optional(), activityId: z.string().optional() })).max(500),
 });
 
 export class RunJournal {

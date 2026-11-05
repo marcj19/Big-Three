@@ -5,6 +5,7 @@ const STEPS = { answer: 'Resposta', plan: 'Planejamento', execute: 'Implementaç
 export function toolLabel(name: string): string {
   const value = name.toLowerCase();
   if (/ask_peer/.test(value)) return 'Consultando um colega';
+  if (/agent|delegate|teamwork/.test(value)) return 'Delegando a um subagente';
   if (/query|sql|schema|database|list_tables/.test(value)) return 'Consultando banco de dados';
   if (/apply_patch|write_file|edit_file|multiedit|(^|__|\.)edit$|(^|__|\.)write$/.test(value)) return 'Alterando arquivos';
   if (/search|grep|glob/.test(value)) return 'Pesquisando';
@@ -37,6 +38,16 @@ export function recordWork(record: RunRecord, event: AppEvent, at = new Date().t
     } else if (e.type === 'tool_result') {
       const entry = latest((entry) => entry.provider === e.provider && entry.kind === 'tool' && entry.status === 'running' && (!e.name || entry.tool === e.name));
       if (entry) entry.status = e.isError ? 'error' : 'done';
+      finishPhases(e.provider);
+      add({ kind: 'phase', provider: e.provider, status: 'running', label: e.isError ? 'Verificando erro de ferramenta' : 'Conferindo o resultado' });
+    } else if (e.type === 'subagent') {
+      const entry = latest((item) => item.kind === 'subagent' && item.provider === e.provider && item.activityId === e.agentId);
+      if (entry) {
+        entry.status = e.status;
+        if (e.detail) entry.detail = e.detail;
+      } else {
+        add({ kind: 'subagent', provider: e.provider, activityId: e.agentId, label: e.label, detail: e.detail, status: e.status });
+      }
     } else if (e.type === 'turn_end') {
       finishPhases(e.provider);
       for (const entry of record.entries) if (entry.provider === e.provider && entry.kind === 'tool' && entry.status === 'running') {
@@ -56,6 +67,14 @@ export function recordWork(record: RunRecord, event: AppEvent, at = new Date().t
     entry.detail = event.activity === 'thinking' ? `${NAMES[event.peer]} está analisando a consulta` : event.activity === 'writing' ? `${NAMES[event.peer]} está preparando a resposta`
       : event.activity === 'tool' ? `${NAMES[event.peer]}: ${toolLabel(event.tool ?? '')}` : 'Consulta encerrada';
     if (['done', 'error', 'cancelled'].includes(event.activity)) entry.status = event.activity as 'done' | 'error' | 'cancelled';
+  } else if (event.type === 'question') {
+    add({ kind: 'question', activityId: event.question.id, provider: event.question.provider, status: 'running', label: 'Aguardando sua resposta' });
+  } else if (event.type === 'question_answered') {
+    const entry = latest((item) => item.kind === 'question' && item.activityId === event.questionId);
+    if (entry) entry.status = 'done';
+  } else if (event.type === 'project_preview') {
+    record.previewUrl = event.url;
+    add({ kind: 'notice', status: 'done', label: 'Prévia local disponível', detail: event.url });
   } else if (event.type === 'step') {
     let entry = record.entries.find((entry) => entry.kind === 'step' && entry.stepIndex === event.step.index);
     if (!entry) { add({ kind: 'step', provider: event.step.provider, stepIndex: event.step.index, status: event.step.status, label: `${event.step.index + 1}. ${STEPS[event.step.kind]}` }); entry = record.entries.at(-1)!; }

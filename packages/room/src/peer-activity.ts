@@ -12,7 +12,7 @@ export interface PeerActivity {
 export function peerActivityReporter(self: ProviderId, emit: (event: PeerActivity) => void): (event: RoomEvent) => void {
   const previous = new Map<ProviderId, string>();
   return (event) => {
-    if (event.type === 'skipped' || event.type === 'limit') return;
+    if (event.type === 'skipped' || event.type === 'limit' || event.type === 'subagent' || event.type === 'preview') return;
     const peer = event.type === 'turn_end' ? event.result.provider : event.provider;
     const activity: PeerActivity['activity'] = event.type === 'turn_start' || event.type === 'tool_result' ? 'thinking' : event.type === 'text' ? 'writing'
       : event.type === 'tool_call' ? 'tool' : event.result.status === 'ok' ? 'done' : event.result.status;

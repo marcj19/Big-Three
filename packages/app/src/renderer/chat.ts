@@ -1,4 +1,4 @@
-import type { MessageView, ProviderId } from '../shared/api.js';
+import type { MessageView, PendingQuestion, ProviderId, StepKind } from '../shared/api.js';
 import { api } from './bridge.js';
 import { ctx } from './ctx.js';
 import { clear, formatTime, h, renderRichText, syncChildren } from './dom.js';
@@ -7,10 +7,13 @@ import { NAMES, PROVIDERS, ready, saveConfig, STARTERS, state, type LiveTurn } f
 import { toast } from './ui.js';
 import { renderOffice } from './office.js';
 import { appearance, setAppearance } from './theme.js';
-import { harnessToolbar, conversationRuns, workCard, matchRun } from './harness.js';
+import { harnessToolbar, conversationRuns, workCard, matchRun, activeRunRecord, showRunActivity } from './harness.js';
 import { toolLabel } from '../shared/work-trace.js';
 
 export const topbarEl = h('header', { class: 'topbar' });
+const runStatus = h('div', { class: 'run-live-status', 'aria-live': 'polite' });
+const questions = h('div', { class: 'run-questions' });
+export const runHeaderEl = h('section', { class: 'run-live-header', 'aria-label': 'Execução em andamento', hidden: true }, runStatus, questions);
 export const messagesEl = h('div', { class: 'messages', role: 'log', 'aria-live': 'polite', 'aria-relevant': 'additions', 'aria-label': 'Mensagens da conversa', tabindex: '-1' });
 const column = h('div', { class: 'col' });
 messagesEl.append(column);
@@ -143,18 +146,93 @@ function updateLive(el: HTMLElement, t: LiveTurn): void {
   const text = el.querySelector<HTMLElement>('.text')!;
   const tools = el.querySelector<HTMLElement>('.tools')!;
   el.querySelector<HTMLElement>('[data-role=note]')!.textContent = t.note ?? 'escrevendo…';
-  const shown = text.dataset.shown ?? '';
-  if (t.text !== shown) {
-    text.dataset.shown = t.text;
-    text.classList.toggle('empty', !t.text);
-    text.replaceChildren(t.text ? renderRichText(t.text, copy) : h('span', { class: 'dots', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')));
-  } else if (!t.text && !text.firstChild) {
+  const marker = '<aio-question>';
+  const clean = t.text.trimStart();
+  const response = clean.startsWith(marker) || marker.startsWith(clean) ? '' : t.text;
+  if (response !== (text.dataset.shown ?? '')) {
+    text.dataset.shown = response;
+    text.classList.toggle('empty', !response);
+    text.replaceChildren(response ? renderRichText(response, copy) : h('span', { class: 'dots', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')));
+  } else if (!response && !text.firstChild) {
     text.append(h('span', { class: 'dots', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')));
   }
   const names = t.tools.slice(-1);
   if (tools.dataset.shown !== names.join('|')) {
     tools.dataset.shown = names.join('|');
     tools.replaceChildren(...names.map((n) => h('span', { class: 'tool' }, icon('terminal', 'sm'), toolLabel(n))));
+  }
+}
+
+const STEP_NAMES: Record<StepKind, string> = {
+  answer: 'Resposta', plan: 'Planejamento', execute: 'Implementação', review: 'Revisão', revise: 'Ajustes', debate: 'Debate',
+};
+const AGENT_STATUS = { running: 'Em andamento', done: 'Concluído', error: 'Falhou', cancelled: 'Cancelado', skipped: 'Ignorado' };
+
+function questionForm(runId: string, question: PendingQuestion): HTMLElement {
+  const answer = h('textarea', { rows: '2', maxlength: '4000', 'aria-label': 'Sua resposta', placeholder: 'Digite sua resposta…', required: true });
+  const submit = h('button', { class: 'btn primary', type: 'submit' }, 'Responder e continuar');
+  const error = h('p', { class: 'run-question-error', role: 'alert' });
+  return h('form', { class: 'run-question', role: 'group', 'aria-label': 'Pergunta para você', onSubmit: async (event: Event) => {
+    event.preventDefault();
+    if (!answer.value.trim() || submit.disabled) return;
+    submit.disabled = true;
+    error.textContent = '';
+    try { await api.answerQuestion(runId, question.id, answer.value.trim()); }
+    catch (err) { error.textContent = (err as Error).message; submit.disabled = false; }
+  } },
+  h('div', { class: 'run-question-label' }, avatar(question.provider), h('b', {}, `${NAMES[question.provider]} precisa da sua resposta`)),
+  h('div', { class: 'run-question-text' }, renderRichText(question.question, copy)),
+  question.options?.length ? h('div', { class: 'run-question-options' }, ...question.options.map((option) => h('button', {
+    class: 'btn tonal', type: 'button', onClick: () => { answer.value = option; answer.focus(); },
+  }, option))) : '',
+  answer, h('div', { class: 'run-question-actions' }, error, submit));
+}
+
+function renderRunHeader(): void {
+  const current = state.current?.meta.id;
+  const run = state.run?.conversationId === current ? state.run : undefined;
+  const pending = state.pending?.conversationId === current ? state.pending : undefined;
+  const elsewhere = !run && state.run?.questions.length ? state.run : undefined;
+  runHeaderEl.hidden = !(run || pending || elsewhere);
+  const record = run ? activeRunRecord() : undefined;
+  const participants = run?.live.filter((turn) => !turn.finished) ?? [];
+  const delegated = record?.entries.filter((entry) => entry.kind === 'consult' || entry.kind === 'subagent') ?? [];
+  const active = delegated.filter((entry) => entry.status === 'running');
+  const shown = [...active, ...delegated.filter((entry) => entry.status !== 'running').reverse()].slice(0, 6);
+  const step = run?.step;
+  const caption = run?.questions.length ? 'Aguardando sua resposta'
+    : step ? `Etapa ${step.index + 1} de ${step.total} · ${STEP_NAMES[step.kind]}`
+      : run ? 'Execução em andamento' : 'Enviando tarefa…';
+  const lead = run?.lead ?? pending?.lead;
+  const signature = JSON.stringify([run?.runId, elsewhere?.runId, caption, lead, participants.map((turn) => [turn.provider, turn.note]), shown, active.length, delegated.length]);
+  if (runStatus.dataset.view !== signature) {
+    runStatus.dataset.view = signature;
+    runStatus.replaceChildren();
+    if (elsewhere) {
+      runStatus.append(h('button', { class: 'btn tonal', type: 'button', onClick: () => void ctx.openConversation(elsewhere.conversationId) }, 'Responder pergunta em outra conversa'));
+    } else if (lead) {
+      runStatus.append(
+        h('div', { class: 'run-live-heading' },
+          h('b', {}, caption),
+          run ? h('button', { class: 'btn text', type: 'button', onClick: () => showRunActivity(run.runId) }, 'Ver atividade') : ''),
+        h('div', { class: 'run-live-people' },
+          ...(participants.length ? participants.map((turn) => h('span', { class: 'run-live-chip' }, avatar(turn.provider), h('b', {}, NAMES[turn.provider]), h('span', {}, turn.note ?? 'Trabalhando…')))
+            : [h('span', { class: 'run-live-chip' }, avatar(step?.provider ?? lead), h('b', {}, NAMES[step?.provider ?? lead]), h('span', {}, run?.questions.length ? 'Aguardando resposta' : run ? 'Preparando a próxima ação' : 'Modelo escolhido'))])),
+      );
+      if (delegated.length) runStatus.append(h('div', { class: 'run-live-delegated' },
+        h('b', {}, `Subagentes · ${active.length} em andamento`),
+        h('div', { class: 'run-live-people' }, ...shown.map((entry) => {
+          const provider = entry.peer ?? entry.provider!;
+          const title = entry.peer ? NAMES[provider] : entry.label;
+          const detail = entry.detail ?? AGENT_STATUS[entry.status];
+          return h('span', { class: 'run-live-chip delegated', title: detail }, avatar(provider), h('b', {}, title), h('span', {}, detail));
+        }))));
+    }
+  }
+  const question = run?.questions[0];
+  if (questions.dataset.id !== (question?.id ?? '')) {
+    questions.dataset.id = question?.id ?? '';
+    questions.replaceChildren(...(run && question ? [questionForm(run.runId, question)] : []));
   }
 }
 
@@ -255,23 +333,28 @@ function updateConsult(el: HTMLElement, item: Extract<Shown, { kind: 'consult' }
 export function renderMessages(instant = false): void {
   renderOffice();
   ctx.renderHarness();
+  renderRunHeader();
   const nearBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 160;
   const conv = state.current;
+  const run = state.run?.conversationId === conv?.meta.id ? state.run : undefined;
+  const pending = state.pending?.conversationId === conv?.meta.id ? state.pending : undefined;
   const items: Parameters<typeof syncChildren>[1] = [];
-  if (!conv || (conv.messages.length === 0 && !state.run)) {
+  if (!conv || (conv.messages.length === 0 && !run && !pending)) {
     items.push({ key: 'empty', create: emptyState });
   } else {
-    for (const shown of group(conv.messages)) {
+    const messages = pending ? [...conv.messages, pending.message] : conv.messages;
+    for (const shown of group(messages)) {
       if (shown.kind === 'message') {
-        items.push({ key: `m:${conv.meta.id}:${shown.message.index}`, create: () => messageNode(shown.message) });
+        const optimistic = shown.message === pending?.message;
+        items.push({ key: optimistic ? `pending:${conv.meta.id}` : `m:${conv.meta.id}:${shown.message.index}`, create: () => messageNode(shown.message) });
         if (shown.message.author === 'user') {
-          const run = matchRun(shown.message, conversationRuns());
-          if (run) items.push({ key: `run:${run.id}`, create: () => workCard(run), update: (el) => workCard(run, el) });
+          const record = optimistic && run ? activeRunRecord() : matchRun(shown.message, conversationRuns());
+          if (record) items.push({ key: `run:${record.id}`, create: () => workCard(record), update: (el) => workCard(record, el) });
         }
       }
       else items.push({ key: `c:${conv.meta.id}:${shown.index}`, create: () => consultNode(shown), update: (el) => updateConsult(el, shown) });
     }
-    for (const t of state.run?.conversationId === conv.meta.id ? state.run.live : []) items.push({ key: `live:${t.provider}:${conv.meta.id}`, create: () => liveNode(t), update: (el) => updateLive(el, t) });
+    for (const t of run?.live ?? []) items.push({ key: `live:${t.provider}:${conv.meta.id}`, create: () => liveNode(t), update: (el) => updateLive(el, t) });
   }
   // Opening another conversation shows its history at once; only messages that arrive later animate in.
   column.classList.toggle('instant', instant);

@@ -12,6 +12,7 @@ export type HarnessPanel = 'activity' | 'files' | 'browser';
 let panel: HarnessPanel | undefined;
 let conversationId: string | undefined;
 let records: RunRecord[] = [];
+let liveRecord: RunRecord | undefined;
 let chosenRun = '';
 let signature = '';
 let historyTicket = 0;
@@ -55,7 +56,17 @@ function setPanel(value: HarnessPanel | undefined): void {
 }
 
 export function startHarnessRun(id: string, input: StartRun): void {
-  records.unshift(newRunRecord(id, input)); chosenRun = id; signature = ''; renderActivity(); void refreshHistory();
+  liveRecord = newRunRecord(id, input);
+  if (state.current?.meta.id !== input.conversationId) return;
+  records = [liveRecord, ...records.filter((record) => record.id !== id)];
+  chosenRun = id;
+  signature = '';
+  renderActivity();
+}
+export const activeRunRecord = (): RunRecord | undefined => liveRecord;
+export function showRunActivity(id: string): void {
+  chosenRun = id;
+  setPanel('activity');
 }
 export function loadHarnessConversation(): void { renderHarness(); void refreshHistory(); }
 export function conversationRuns(): RunRecord[] { return records; }
@@ -66,20 +77,29 @@ export function matchRun(message: MessageView, runs: RunRecord[]): RunRecord | u
 export function workCard(run: RunRecord, existing?: HTMLElement): HTMLElement {
   const el = existing ?? h('section', { class: 'chat-work-card', 'aria-label': 'Resumo do trabalho da equipe' });
   const last = run.entries.slice().reverse().find((entry) => !['start', 'finish'].includes(entry.kind));
+  const waiting = run.entries.some((entry) => entry.kind === 'question' && entry.status === 'running');
   const providers = [...new Set(run.entries.flatMap((entry) => [entry.provider, entry.peer].filter((id): id is NonNullable<typeof id> => !!id)))];
-  const key = JSON.stringify([run.status, last, providers, run.entries.length]);
+  const counts = [
+    [run.entries.filter((entry) => entry.kind === 'tool').length, 'ferramenta', 'ferramentas'],
+    [run.entries.filter((entry) => entry.kind === 'consult').length, 'consulta entre IAs', 'consultas entre IAs'],
+    [run.entries.filter((entry) => entry.kind === 'subagent').length, 'subagente', 'subagentes'],
+  ] as const;
+  const summary = counts.filter(([count]) => count > 0).map(([count, single, plural]) => `${count} ${count === 1 ? single : plural}`).join(' · ');
+  const key = JSON.stringify([run.status, last, waiting, providers, run.entries.length, run.previewUrl]);
   if (el.dataset.view === key) return el;
   el.dataset.view = key;
   el.replaceChildren(h('div', { class: 'chat-work-head' }, h('span', { class: 'chat-work-avatars' }, ...providers.map((id) => h('span', { class: 'avatar xs', title: NAMES[id] }, providerMark(id)))),
-    h('b', {}, run.status === 'running' ? 'A equipe está trabalhando' : `Execução ${run.status === 'ok' ? 'concluída' : run.status === 'cancelled' ? 'cancelada' : 'com erro'}`)),
-    h('p', {}, run.status === 'running' ? last?.label ?? 'Preparando a tarefa…' : `${run.entries.filter((entry) => entry.kind === 'tool').length} ferramentas · ${run.entries.filter((entry) => entry.kind === 'consult').length} consultas entre IAs`),
-    h('button', { class: 'btn text', type: 'button', onClick: () => { chosenRun = run.id; setPanel('activity'); } }, 'Ver etapas e detalhes'));
+    h('b', {}, run.status === 'running' ? waiting ? 'Aguardando sua resposta' : 'Execução em andamento' : `Execução ${run.status === 'ok' ? 'concluída' : run.status === 'cancelled' ? 'cancelada' : 'com erro'}`)),
+    waiting ? '' : h('p', {}, run.status === 'running' ? last?.detail ?? last?.label ?? 'Preparando a tarefa…' : summary),
+    h('div', { class: 'chat-work-actions' },
+      h('button', { class: 'btn text', type: 'button', onClick: () => showRunActivity(run.id) }, 'Ver etapas e detalhes'),
+      run.previewUrl ? h('button', { class: 'btn tonal', type: 'button', onClick: () => openProjectPreview(run.previewUrl!) }, 'Abrir prévia') : ''));
   return el;
 }
 export function onHarnessEvent(event: AppEvent): void {
   if (event.type === 'browser') return onBrowserState(event.state);
   if (!('runId' in event)) return;
-  const record = records.find((record) => record.id === event.runId);
+  const record = liveRecord?.id === event.runId ? liveRecord : records.find((record) => record.id === event.runId);
   if (record) recordWork(record, event);
   if (event.type !== 'room' || event.event.type !== 'text') signature = '';
   if (event.type === 'run_done') { void refreshHistory(); void refreshFiles(); }
@@ -92,7 +112,9 @@ async function refreshHistory(): Promise<void> {
   try {
     const history = await api.runHistory(id);
     if (ticket !== historyTicket || state.current?.meta.id !== id) return;
-    records = history; signature = '';
+    const active = liveRecord?.conversationId === id && liveRecord.status === 'running' ? liveRecord : undefined;
+    records = active ? [active, ...history.filter((record) => record.id !== active.id)] : history;
+    signature = '';
     if (!records.some((record) => record.id === chosenRun)) chosenRun = records[0]?.id ?? '';
     renderActivity();
     ctx.renderMessages();
@@ -245,6 +267,11 @@ export function openBrowser(input: string): void {
     renderBrowser();
   } catch (err) { fail(err); }
 }
+export function openProjectPreview(url: string): void {
+  wide = false;
+  harnessEl.closest('.workbench')?.classList.remove('panel-wide');
+  openBrowser(url);
+}
 function onBrowserState(value: BrowserState): void { browsing = value; renderBrowser(); scheduleBounds(); }
 function renderBrowser(): void {
   if (document.activeElement !== address) address.value = browsing.url || requestedUrl;
@@ -271,7 +298,7 @@ function scheduleBounds(): void {
 export function renderHarness(): void {
   const id = state.current?.meta.id;
   if (conversationId !== id) {
-    conversationId = id; records = []; chosenRun = ''; signature = ''; directories.clear(); loadingDirectories.clear(); expanded.clear(); expanded.add(''); currentFile = undefined; fileTicket++; directoryError = '';
+    conversationId = id; records = liveRecord && liveRecord.conversationId === id ? [liveRecord] : []; chosenRun = ''; signature = ''; directories.clear(); loadingDirectories.clear(); expanded.clear(); expanded.add(''); currentFile = undefined; fileTicket++; directoryError = '';
     if (panel === 'activity') void refreshHistory();
   }
   if (panel === 'activity') renderActivity();

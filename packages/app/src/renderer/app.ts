@@ -1,6 +1,6 @@
-import type { AppEvent } from '../shared/api.js';
+import type { AppEvent, ProviderId } from '../shared/api.js';
 import { api, onEvent } from './bridge.js';
-import { messagesEl, renderMessages, renderTopbar, scrollToEnd, topbarEl } from './chat.js';
+import { messagesEl, renderMessages, renderTopbar, runHeaderEl, scrollToEnd, topbarEl } from './chat.js';
 import { composerEl, focusComposer, promptEl, renderComposer, setPrompt } from './composer.js';
 import { ctx } from './ctx.js';
 import { h } from './dom.js';
@@ -10,7 +10,8 @@ import { buildSpec, canLead, loadConfig, NAMES, PROVIDERS, ready, saveConfig, st
 import { loadAppearance } from './theme.js';
 import { openDialog, toast } from './ui.js';
 import { initOffice, officeEl, onOfficeEvent, startOfficeRun } from './office.js';
-import { harnessEl, initHarness, onHarnessEvent, openBrowser, renderHarness, startHarnessRun, togglePanel, loadHarnessConversation } from './harness.js';
+import { harnessEl, initHarness, onHarnessEvent, openBrowser, openProjectPreview, renderHarness, startHarnessRun, togglePanel, loadHarnessConversation } from './harness.js';
+import { toolLabel } from '../shared/work-trace.js';
 
 loadAppearance();
 installIcons();
@@ -21,7 +22,7 @@ const root = document.getElementById('app')!;
 root.append(
   h('a', { class: 'skip', href: '#prompt', onClick: (e: Event) => { e.preventDefault(); promptEl.focus(); } }, 'Ir para a mensagem'),
   h('div', { class: 'shell' }, sidebarEl, h('main', { class: 'main', id: 'main' }, topbarEl,
-    h('div', { class: 'workbench' }, h('div', { class: 'workspace' }, officeEl, h('section', { class: 'chat-pane', 'aria-label': 'Chat' }, messagesEl, composerEl)), harnessEl))),
+    h('div', { class: 'workbench' }, h('div', { class: 'workspace' }, officeEl, h('section', { class: 'chat-pane', 'aria-label': 'Chat' }, runHeaderEl, messagesEl, composerEl)), harnessEl))),
 );
 initOffice();
 initHarness();
@@ -89,18 +90,54 @@ async function refreshQuotas(): Promise<void> {
 }
 setInterval(() => void refreshQuotas(), 5 * 60_000);
 
+let selection = 0;
+let transcriptTicket = 0;
 async function openConversation(id: string, keepScroll = false): Promise<void> {
+  const ticket = ++selection;
   try {
-    state.current = await api.getConversation(id);
+    const conversation = await api.getConversation(id);
+    if (ticket !== selection) return;
+    state.current = conversation;
+    reconcilePending();
   } catch (err) {
+    if (ticket !== selection) return;
     state.current = undefined;
     fail(err);
   }
   renderSidebar();
   renderTopbar();
+  renderComposer();
   renderMessages(!keepScroll);
   loadHarnessConversation();
   if (!keepScroll) scrollToEnd();
+}
+
+function reconcilePending(): void {
+  const pending = state.pending;
+  if (!pending || pending.conversationId !== state.current?.meta.id) return;
+  if (state.current.messages.some((message) => message.index >= pending.message.index && message.author === 'user' && message.text === pending.message.text)) {
+    state.pending = undefined;
+  }
+}
+
+async function refreshTranscript(id: string, savedProvider?: ProviderId): Promise<void> {
+  if (state.current?.meta.id !== id) return;
+  const selected = selection;
+  const ticket = ++transcriptTicket;
+  const run = state.run;
+  const finished = run?.live.find((turn) => turn.finished && turn.provider === savedProvider);
+  try {
+    const conversation = await api.getConversation(id);
+    if (selected !== selection || state.current?.meta.id !== id) return;
+    if (finished && state.run === run && run) run.live = run.live.filter((turn) => turn !== finished);
+    if (ticket === transcriptTicket) {
+      const renamed = state.current.meta.title !== conversation.meta.title;
+      state.current = conversation;
+      reconcilePending();
+      if (renamed) renderTopbar();
+    }
+    renderMessages();
+  } catch (err) { if (ticket === transcriptTicket && selected === selection) fail(err); }
 }
 
 // ---------- new conversation ----------
@@ -175,31 +212,53 @@ async function createConversationFlow(): Promise<boolean> {
 
 // ---------- sending ----------
 
+let starting: { conversationId: string; events: AppEvent[] } | undefined;
+
 async function send(): Promise<void> {
-  if (state.run) return;
+  if (state.run || state.sending) return;
   const text = promptEl.value.trim();
   if (!text) return void promptEl.focus();
+  state.sending = true;
   try {
     if (!state.current && !(await newConversation())) return;
-    const spec = buildSpec(state.config);
-    const conversationId = state.current!.meta.id;
-    const { runId } = await api.startRun({ conversationId, prompt: text, spec, connections: state.config.connections, peerTools: canLead(state.config.lead.provider) && teamMembers().length > 0 });
-    state.run = { runId, conversationId, live: [] };
-    startHarnessRun(runId, { conversationId, prompt: text, spec, connections: state.config.connections, peerTools: canLead(state.config.lead.provider) && teamMembers().length > 0 });
-    startOfficeRun(conversationId);
+    const conversation = state.current!;
+    const conversationId = conversation.meta.id;
+    const lead = state.config.lead.provider;
+    const input = { conversationId, prompt: text, spec: buildSpec(state.config), connections: [...state.config.connections],
+      peerTools: canLead(lead) && teamMembers().length > 0 };
+    const request = { conversationId, events: [] as AppEvent[] };
+    starting = request;
+    state.pending = { conversationId, lead, message: { index: (conversation.messages.at(-1)?.index ?? 0) + 1, author: 'user', text, at: new Date().toISOString() } };
     setPrompt('');
-    state.current = await api.getConversation(conversationId);
     renderComposer();
     renderMessages();
     scrollToEnd();
+    const { runId } = await api.startRun(input);
+    starting = undefined;
+    state.run = { runId, conversationId, lead, live: [], questions: [], activePeers: new Set() };
+    startHarnessRun(runId, input);
+    startOfficeRun(conversationId);
+    for (const event of request.events) onAppEvent(event);
+    void refreshTranscript(conversationId);
   } catch (err) {
+    starting = undefined;
+    state.pending = undefined;
+    if (!promptEl.value) setPrompt(text);
     fail(err);
+  } finally {
+    state.sending = false;
+    renderComposer();
+    renderMessages();
   }
 }
 
 // ---------- events from the main process ----------
 
 function onAppEvent(ev: AppEvent): void {
+  if ('runId' in ev && starting?.conversationId === ev.conversationId) {
+    starting.events.push(ev);
+    return;
+  }
   onHarnessEvent(ev);
   if (ev.type === 'browser') return;
   if (ev.type === 'login') {
@@ -216,38 +275,59 @@ function onAppEvent(ev: AppEvent): void {
     renderSidebar();
     return;
   }
-  if (!state.run || ev.runId !== state.run.runId) return;
+  const run = state.run;
+  if (!run || ev.runId !== run.runId) return;
   onOfficeEvent(ev);
   if (ev.type === 'room') {
     const e = ev.event;
-    const live = state.run.live;
+    const live = run.live;
     if (e.type === 'turn_start') {
       const i = live.findIndex((l) => l.provider === e.provider);
       if (i >= 0) live.splice(i, 1);
       live.push({ provider: e.provider, text: '', tools: [], note: 'trabalhando…' });
     } else if (e.type === 'text') {
       const turn = live.find((l) => l.provider === e.provider);
-      if (turn) { turn.text = e.partial ? turn.text + e.text : e.text; turn.note = 'preparando resposta…'; }
+      if (turn) { turn.text = e.partial ? turn.text + e.text : e.text; turn.note = 'Escrevendo a resposta'; turn.tools = []; }
     } else if (e.type === 'tool_call') {
-      live.find((l) => l.provider === e.provider)?.tools.push(e.name);
+      const turn = live.find((l) => l.provider === e.provider);
+      if (turn) { turn.tools = [e.name]; turn.note = toolLabel(e.name); }
     } else if (e.type === 'tool_result') {
       const turn = live.find((l) => l.provider === e.provider);
-      if (turn) turn.note = e.isError ? 'conferindo um problema na ferramenta…' : 'conferindo o resultado…';
+      if (turn) { turn.tools = []; turn.note = e.isError ? 'Verificando erro de ferramenta' : 'Conferindo o resultado'; }
     } else if (e.type === 'skipped') {
       toast(`${NAMES[e.provider]} foi ignorado: ${e.reason}.`);
     } else if (e.type === 'turn_end') {
-      // The finished message is in the transcript now; swap the live preview for it.
-      void api.getConversation(ev.conversationId).then((c) => {
-        if (state.current?.meta.id === c.meta.id) state.current = c;
-        const run = state.run;
-        if (run?.runId === ev.runId) run.live = run.live.filter((l) => l.provider !== e.provider);
-        renderMessages();
-        void refreshUsage();
-      });
+      const turn = live.find((l) => l.provider === e.provider);
+      if (turn) { turn.finished = true; turn.tools = []; turn.note = e.status === 'ok' ? 'Turno concluído' : e.status === 'cancelled' ? 'Turno cancelado' : 'Falha no turno'; }
+      void refreshUsage().catch(fail);
     }
+    renderMessages();
+  } else if (ev.type === 'transcript') {
+    void refreshTranscript(ev.conversationId, ev.provider);
+  } else if (ev.type === 'peer_activity') {
+    const key = [ev.self, ev.peer].join(':');
+    const terminal = ev.activity === 'done' || ev.activity === 'error' || ev.activity === 'cancelled';
+    if (terminal) run.activePeers.delete(key);
+    else if (!run.activePeers.has(key)) {
+      run.activePeers.add(key);
+      void refreshTranscript(ev.conversationId);
+    }
+    if (terminal) void refreshTranscript(ev.conversationId);
+    renderMessages();
+  } else if (ev.type === 'step') {
+    run.step = ev.step;
+    renderMessages();
+  } else if (ev.type === 'question' || ev.type === 'question_answered') {
+    if (ev.type === 'question') run.questions.push(ev.question);
+    else run.questions = run.questions.filter((question) => question.id !== ev.questionId);
+    renderComposer();
+    renderMessages();
+  } else if (ev.type === 'project_preview') {
+    if (state.current?.meta.id === ev.conversationId) openProjectPreview(ev.url);
     renderMessages();
   } else if (ev.type === 'run_done') {
     state.run = undefined;
+    if (state.pending?.conversationId === ev.conversationId && ev.outcome.status === 'error') state.pending = undefined;
     const o = ev.outcome;
     if (o.status === 'ok') {
       const verdict = o.verdict === 'approve' ? ' O revisor aprovou.' : o.verdict === 'changes' ? ' O revisor ainda pede mudanças.' : '';
@@ -258,7 +338,8 @@ function onAppEvent(ev: AppEvent): void {
       toast('Cancelado.');
     }
     renderComposer();
-    void Promise.all([state.current?.meta.id === ev.conversationId ? openConversation(ev.conversationId, true) : Promise.resolve(), refreshConversations(), refreshUsage()]);
+    renderMessages();
+    void Promise.all([refreshTranscript(ev.conversationId), refreshConversations(), refreshUsage()]).catch(fail);
   }
 }
 

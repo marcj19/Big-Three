@@ -15,6 +15,7 @@ export interface PromptInput {
   team?: ProviderId[];
   /** The model's own session continues, so the transcript holds only what it has not seen yet. */
   resumed?: boolean;
+  interactive?: boolean;
   render?: Partial<RenderOptions>;
 }
 
@@ -38,6 +39,10 @@ export function buildPrompt(input: PromptInput): { systemPrompt: string; prompt:
     );
   }
   if (input.role) lines.push(input.role);
+  if (input.interactive) lines.push(
+    'If you need a decision or missing information before continuing, pause and make your entire final response one block: <aio-question>{"question":"Your question","options":["Option 1","Option 2"]}</aio-question>. Options are optional. The app will show a reply field and resume this task after the user answers. Use it only when a decision is needed and ask before making the affected changes. Do not wrap the block in a Markdown fence.',
+    'If you start a local project preview and verify that it is running, include its exact loopback URL and port in your reply.',
+  );
 
   const prompt = [
     input.resumed ? 'NEW IN THE ROOM SINCE YOUR LAST TURN' : 'ROOM TRANSCRIPT',

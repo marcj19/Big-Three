@@ -1,6 +1,7 @@
 import type { AgentEvent, Access, AuthStatus, ModelOption, RunRequest } from '../types.js';
 import { CliAdapter, DEFAULT_MODEL, isRecord, num, str, type BuiltInvocation, type Parser } from './base.js';
 import { readCodexQuota } from '../codex-quota.js';
+import { commandPreviews } from '../preview.js';
 
 const SANDBOX: Record<Access, string> = {
   'read-only': 'read-only',
@@ -76,6 +77,21 @@ export class CodexAdapter extends CliAdapter {
     return (raw) => {
       if (!isRecord(raw)) return [];
       const events: AgentEvent[] = [];
+      const item = isRecord(raw.item) ? raw.item : {};
+      if ((raw.type === 'item.started' || raw.type === 'item.updated' || raw.type === 'item.completed') && item.type === 'collab_tool_call' && isRecord(item.agents_states)) {
+        for (const [agentId, agent] of Object.entries(item.agents_states)) {
+          if (!isRecord(agent)) continue;
+          const state = str(agent.status);
+          const status = state === 'completed' ? 'done' : state === 'errored' ? 'error'
+            : state === 'shutdown' || state === 'interrupted' ? 'cancelled'
+              : state === 'running' || state === 'pending_init' ? 'running' : undefined;
+          if (status) events.push({ type: 'subagent', agentId, label: 'Subagente do Codex', status,
+            detail: item.tool === 'spawn_agent' ? str(item.prompt)?.slice(0, 240) : undefined });
+        }
+      }
+      if ((raw.type === 'item.updated' || raw.type === 'item.completed') && item.type === 'command_execution' && (item.exit_code == null || item.exit_code === 0)) {
+        for (const url of commandPreviews(str(item.aggregated_output) ?? '')) events.push({ type: 'preview', url });
+      }
       switch (str(raw.type)) {
         case 'thread.started': {
           const id = str(raw.thread_id);
@@ -83,7 +99,6 @@ export class CodexAdapter extends CliAdapter {
           break;
         }
         case 'item.started': {
-          const item = isRecord(raw.item) ? raw.item : {};
           if (str(item.type) === 'command_execution') events.push({ type: 'tool_call', name: 'shell', input: item.command });
           else if (str(item.type) === 'file_change' || str(item.type) === 'web_search') {
             if (str(item.id)) startedItems.add(str(item.id)!);
@@ -93,7 +108,6 @@ export class CodexAdapter extends CliAdapter {
           break;
         }
         case 'item.completed': {
-          const item = isRecord(raw.item) ? raw.item : {};
           const kind = str(item.type);
           if (kind === 'agent_message' && str(item.text)) {
             lastMessage = str(item.text)!;

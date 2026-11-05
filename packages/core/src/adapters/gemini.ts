@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AgentEvent, Access, AuthStatus, ModelOption, RunRequest } from '../types.js';
 import { CliAdapter, DEFAULT_MODEL, isRecord, num, str, type BuiltInvocation, type Parser } from './base.js';
+import { commandPreviews } from '../preview.js';
 
 const MODE: Record<Access, string> = {
   'read-only': 'plan',
@@ -78,6 +79,7 @@ export class GeminiAdapter extends CliAdapter {
     let sessionSeen = false;
     let assistantText = '';
     const startedTools = new Set<number>();
+    const reportedAgents = new Set<string>();
     return (raw) => {
       if (!isRecord(raw)) return [];
       const events: AgentEvent[] = [];
@@ -95,6 +97,17 @@ export class GeminiAdapter extends CliAdapter {
           const kind = str(step.step_type);
           const state = str(step.state);
           const index = num(step.step_index);
+          const delegation = isRecord(step.subagent_info) ? step.subagent_info.subagents : undefined;
+          if (Array.isArray(delegation)) {
+            for (const [position, agent] of delegation.entries()) {
+              if (!isRecord(agent)) continue;
+              const agentId = str(agent.conversation_id) ?? (index === undefined ? undefined : [index, position].join(':'));
+              if (!agentId || reportedAgents.has(agentId)) continue;
+              reportedAgents.add(agentId);
+              events.push({ type: 'subagent', agentId, label: (str(agent.type_name) ?? 'Subagente do Gemini').slice(0, 180),
+                detail: str(agent.role)?.slice(0, 240), status: 'running' });
+            }
+          }
           if (kind === 'agent_response') {
             const delta = str(step.text_delta);
             if (delta) {
@@ -109,7 +122,9 @@ export class GeminiAdapter extends CliAdapter {
               startedTools.add(index);
               events.push({ type: 'tool_call', name, input: info.parameters });
             }
-            if (state === 'DONE') events.push({ type: 'tool_result', name, isError: step.error !== undefined && step.error !== null });
+            const isError = (step.error ?? info.error) != null;
+            if (!isError && name === 'run_command') for (const url of commandPreviews(str(info.output) ?? '')) events.push({ type: 'preview', url });
+            if (state === 'DONE') events.push({ type: 'tool_result', name, isError });
           }
           break;
         }

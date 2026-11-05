@@ -1,10 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import type { Adapter, McpServerSpec, ProviderId } from '@aio/core';
+import type { Adapter, McpServerSpec, ProviderId, UserQuestion } from '@aio/core';
 import { crossReview, debate, planExecute, Room, runFlow, type FlowStep, type PatternResult, type RoomEvent, type Team, type UsageTracker } from '@aio/room';
 import type { AppEvent, RoomEventView, RunOutcome, StartRun } from '../shared/api.js';
 import type { ConversationStore } from './conversations.js';
 import { watchPeerActivity } from './peer-activity.js';
 import type { RunJournal } from './run-journal.js';
+import { findProjectPreview } from './project-preview.js';
+
+interface ActiveRun {
+  conversationId: string;
+  abort: AbortController;
+  answers: Map<string, (answer: string) => void>;
+}
 
 export interface RunDeps {
   adapters: Partial<Record<ProviderId, Adapter>>;
@@ -32,7 +39,7 @@ const fromPattern = (r: PatternResult): RunOutcome => ({ status: r.status, final
 
 /** One run at a time per conversation: two runs appending to the same transcript would interleave their turns. */
 export class RunManager {
-  private readonly active = new Map<string, { conversationId: string; abort: AbortController }>();
+  private readonly active = new Map<string, ActiveRun>();
 
   constructor(private readonly deps: RunDeps) {}
 
@@ -41,18 +48,42 @@ export class RunManager {
   }
 
   /** Starts in the background and returns at once; progress and the result arrive as events. */
-  start(input: StartRun, cwd: string): string {
+  start(input: StartRun, cwd: string, allowPreview = false): string {
     if (this.isBusy(input.conversationId)) throw new Error('This conversation is already running. Wait for it or cancel it.');
     const runId = randomUUID();
     this.deps.journal?.begin(runId, input);
     const abort = new AbortController();
-    this.active.set(runId, { conversationId: input.conversationId, abort });
-    void this.execute(runId, input, cwd, abort).finally(() => this.active.delete(runId));
+    this.active.set(runId, { conversationId: input.conversationId, abort, answers: new Map() });
+    void this.execute(runId, input, cwd, abort, allowPreview).finally(() => this.active.delete(runId));
     return runId;
   }
 
   cancel(runId: string): void {
     this.active.get(runId)?.abort.abort();
+  }
+
+  answer(runId: string, questionId: string, answer: string): void {
+    const resolve = this.active.get(runId)?.answers.get(questionId);
+    if (!resolve) throw new Error('Esta pergunta já foi respondida ou a execução foi encerrada.');
+    resolve(answer);
+  }
+
+  private ask(runId: string, provider: ProviderId, question: UserQuestion): Promise<string | undefined> {
+    const run = this.active.get(runId);
+    if (!run || run.abort.signal.aborted) return Promise.resolve(undefined);
+    const id = randomUUID();
+    return new Promise((resolve) => {
+      const finish = (answer?: string) => {
+        run.answers.delete(id);
+        run.abort.signal.removeEventListener('abort', cancel);
+        if (answer !== undefined) this.publish({ type: 'question_answered', runId, conversationId: run.conversationId, questionId: id });
+        resolve(answer);
+      };
+      const cancel = () => finish();
+      run.answers.set(id, finish);
+      run.abort.signal.addEventListener('abort', cancel, { once: true });
+      this.publish({ type: 'question', runId, conversationId: run.conversationId, question: { ...question, provider, id } });
+    });
   }
 
   private publish(event: AppEvent): void {
@@ -97,11 +128,28 @@ export class RunManager {
     return { status: result.status, final: result.text, error: result.error };
   }
 
-  private async execute(runId: string, input: StartRun, cwd: string, abort: AbortController): Promise<void> {
+  private async execute(runId: string, input: StartRun, cwd: string, abort: AbortController, allowPreview: boolean): Promise<void> {
     const { deps } = this;
     const conversationId = input.conversationId;
     let outcome: RunOutcome;
     let activity: Awaited<ReturnType<typeof watchPeerActivity>> | undefined;
+    let previewUrl: string | undefined;
+    let previewCheck = Promise.resolve();
+    const previewBanners = new Set<string>();
+    const offerPreview = (text: string, final = false) => {
+      if (!allowPreview || previewUrl || abort.signal.aborted) return;
+      if (!final) {
+        if (previewBanners.size >= 8 || previewBanners.has(text)) return;
+        previewBanners.add(text);
+      }
+      previewCheck = previewCheck.then(async () => {
+        if (previewUrl || abort.signal.aborted) return;
+        const url = await findProjectPreview(text);
+        if (!url || abort.signal.aborted) return;
+        previewUrl = url;
+        this.publish({ type: 'project_preview', runId, conversationId, url });
+      }).catch(() => {});
+    };
     try {
       if (input.peerTools) {
         activity = await watchPeerActivity((event) => {
@@ -114,7 +162,12 @@ export class RunManager {
         cwd,
         transcript: deps.store.transcript(conversationId),
         usage: deps.usage,
-        onEvent: (event) => this.publish({ type: 'room', runId, conversationId, event: toView(event) }),
+        onEvent: (event) => {
+          if (event.type === 'preview') offerPreview(event.url);
+          else this.publish({ type: 'room', runId, conversationId, event: toView(event) });
+        },
+        onTranscript: (provider) => this.publish({ type: 'transcript', runId, conversationId, provider }),
+        onQuestion: (provider, question) => this.ask(runId, provider, question),
         peerServer: input.peerTools ? { entry: deps.peerEntry, activityFile: activity?.file, team: input.spec.kind === 'lead' ? teamOf(input.spec.team, input.spec.lead.provider) : undefined } : undefined,
       });
       const db = input.connections.length ? deps.databaseTools(input.connections) : undefined;
@@ -155,6 +208,8 @@ export class RunManager {
     } catch (err) {
       outcome = { status: 'error', final: '', error: err instanceof Error ? err.message : String(err) };
     }
+    if (outcome.status === 'ok') offerPreview(outcome.final, true);
+    await previewCheck;
     await activity?.close();
     const finished: AppEvent = { type: 'run_done', runId, conversationId, outcome };
     deps.journal?.event(runId, finished);

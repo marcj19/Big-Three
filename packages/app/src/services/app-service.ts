@@ -288,11 +288,15 @@ export class AppService implements Api {
       });
       if (!ok) throw new Error('Write access was not confirmed, so nothing was started');
     }
-    return { runId: this.runs.start(input, meta.cwd) };
+    return { runId: this.runs.start(input, meta.cwd, level !== 'read-only') };
   }
 
   async cancelRun(runId: string): Promise<void> {
     this.runs.cancel(runId);
+  }
+
+  async answerQuestion(runId: string, questionId: string, answer: string): Promise<void> {
+    this.runs.answer(z.string().uuid().parse(runId), z.string().uuid().parse(questionId), z.string().trim().min(1).max(4000).parse(answer));
   }
 
   async usage(): Promise<Record<string, UsageView>> {

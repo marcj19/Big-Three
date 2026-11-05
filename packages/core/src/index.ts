@@ -5,6 +5,7 @@ import type { AdapterOptions } from './adapters/base.js';
 import type { Adapter, ProviderId } from './types.js';
 
 export * from './types.js';
+export { localPreviewUrls } from './preview.js';
 export { sanitizeEnv } from './env.js';
 export { resolveCommand, type ResolvedCommand } from './command.js';
 export { ClaudeAdapter, CodexAdapter, GeminiAdapter };

@@ -44,12 +44,27 @@ export interface RunRequest {
 
 export type DoneStatus = 'ok' | 'error' | 'cancelled';
 
+export interface UserQuestion {
+  question: string;
+  options?: string[];
+}
+
+export interface SubagentActivity {
+  agentId: string;
+  label: string;
+  status: 'running' | 'done' | 'error' | 'cancelled';
+  detail?: string;
+}
+
 export type AgentEvent =
   | { type: 'session'; sessionId: string }
   /** `partial` marks streaming deltas; non-partial text is a complete assistant message. */
   | { type: 'text'; text: string; partial?: boolean }
   | { type: 'tool_call'; name: string; input?: unknown }
   | { type: 'tool_result'; name?: string; isError?: boolean }
+  | ({ type: 'subagent' } & SubagentActivity)
+  | ({ type: 'question' } & UserQuestion)
+  | { type: 'preview'; url: string }
   | { type: 'usage'; inputTokens?: number; outputTokens?: number; costUsd?: number }
   /** Subscription-limit state the CLI reported. `resetsAt` is epoch milliseconds. */
   | { type: 'limit'; status: string; window?: string; resetsAt?: number; usedPercent?: number }

@@ -2,6 +2,8 @@
  * The contract between the window and the main process. Plain data only (it crosses an IPC boundary), and nothing
  * here can carry a password out of the app: passwords only ever travel from the window to the vault.
  */
+import type { SubagentActivity, UserQuestion } from '@aio/core';
+
 export type ProviderId = 'claude' | 'gemini' | 'codex';
 export type Access = 'read-only' | 'edit' | 'full';
 export type Engine = 'postgres' | 'mysql' | 'oracle';
@@ -161,6 +163,8 @@ export type RoomEventView =
   | { type: 'text'; provider: ProviderId; text: string; partial: boolean }
   | { type: 'tool_call'; provider: ProviderId; name: string }
   | { type: 'tool_result'; provider: ProviderId; name?: string; isError: boolean }
+  | ({ type: 'subagent'; provider: ProviderId } & SubagentActivity)
+  | { type: 'preview'; provider: ProviderId; url: string }
   | { type: 'limit'; provider: ProviderId; status: string; window?: string; resetsAt?: number; usedPercent?: number }
   | { type: 'skipped'; provider: ProviderId; reason: string }
   | { type: 'turn_end'; provider: ProviderId; status: 'ok' | 'error' | 'cancelled'; error?: string; inputTokens: number; outputTokens: number };
@@ -171,7 +175,16 @@ export type AppEvent =
   | { type: 'peer_activity'; runId: string; conversationId: string; self: ProviderId; peer: ProviderId; activity: 'thinking' | 'writing' | 'tool' | 'done' | 'error' | 'cancelled'; tool?: string }
   | { type: 'room'; runId: string; conversationId: string; event: RoomEventView }
   | { type: 'step'; runId: string; conversationId: string; step: StepEventView }
+  | { type: 'transcript'; runId: string; conversationId: string; provider?: ProviderId }
+  | { type: 'question'; runId: string; conversationId: string; question: PendingQuestion }
+  | { type: 'question_answered'; runId: string; conversationId: string; questionId: string }
+  | { type: 'project_preview'; runId: string; conversationId: string; url: string }
   | { type: 'run_done'; runId: string; conversationId: string; outcome: RunOutcome };
+
+export interface PendingQuestion extends UserQuestion {
+  id: string;
+  provider: ProviderId;
+}
 
 export interface Api {
   providersStatus(): Promise<ProviderStatus[]>;
@@ -196,6 +209,7 @@ export interface Api {
 
   startRun(input: StartRun): Promise<{ runId: string }>;
   cancelRun(runId: string): Promise<void>;
+  answerQuestion(runId: string, questionId: string, answer: string): Promise<void>;
   usage(): Promise<Record<string, UsageView>>;
   accountQuotas(): Promise<AccountQuota[]>;
 
@@ -231,6 +245,7 @@ export const API_METHODS = [
   'deleteConversation',
   'startRun',
   'cancelRun',
+  'answerQuestion',
   'usage',
   'accountQuotas',
   'pickFolder',
@@ -247,11 +262,12 @@ export interface WorkspaceFile { path: string; text: string; bytes: number; trun
 export interface BrowserBounds { visible: boolean; x: number; y: number; width: number; height: number }
 export interface BrowserState { supported: boolean; url: string; title: string; loading: boolean; canBack: boolean; canForward: boolean; error?: string }
 export interface WorkEntry {
-  id: number; at: string; kind: 'start' | 'phase' | 'tool' | 'consult' | 'step' | 'finish' | 'notice';
+  id: number; at: string; kind: 'start' | 'phase' | 'tool' | 'consult' | 'subagent' | 'question' | 'step' | 'finish' | 'notice';
   provider?: ProviderId; peer?: ProviderId; status: 'running' | 'done' | 'error' | 'cancelled' | 'skipped';
-  label: string; detail?: string; tool?: string; stepIndex?: number;
+  label: string; detail?: string; tool?: string; stepIndex?: number; activityId?: string;
 }
 export interface RunRecord {
   id: string; conversationId: string; prompt: string; startedAt: string; endedAt?: string;
   status: 'running' | 'ok' | 'error' | 'cancelled'; entries: WorkEntry[]; inputTokens: number; outputTokens: number;
+  previewUrl?: string;
 }

@@ -1,4 +1,4 @@
-import type { AccountQuota, Access, ConnectionView, ConversationMeta, MessageView, ModelOption, ProviderId, ProviderStatus, RunSpec, UsageView } from '../shared/api.js';
+import type { AccountQuota, Access, ConnectionView, ConversationMeta, MessageView, ModelOption, PendingQuestion, ProviderId, ProviderStatus, RunSpec, StepEventView, UsageView } from '../shared/api.js';
 import type { IconName } from './icons.js';
 
 export const PROVIDERS: ProviderId[] = ['claude', 'gemini', 'codex'];
@@ -39,12 +39,17 @@ export interface LiveTurn {
   text: string;
   tools: string[];
   note?: string;
+  finished?: boolean;
 }
 
 export interface RunState {
   runId: string;
   conversationId: string;
   live: LiveTurn[];
+  lead: ProviderId;
+  step?: StepEventView;
+  questions: PendingQuestion[];
+  activePeers: Set<string>;
 }
 
 export const state = {
@@ -55,6 +60,8 @@ export const state = {
   conversations: [] as ConversationMeta[],
   current: undefined as { meta: ConversationMeta; messages: MessageView[] } | undefined,
   run: undefined as RunState | undefined,
+  pending: undefined as { conversationId: string; message: MessageView; lead: ProviderId } | undefined,
+  sending: false,
   usage: {} as Record<string, UsageView>,
   /** Plan limits per model (percent used and renewal), as far as each CLI lets the app read them. */
   quotas: [] as AccountQuota[],

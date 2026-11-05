@@ -1,4 +1,4 @@
-import type { Access, DoneStatus, McpServerSpec, ProviderId } from '@aio/core';
+import type { Access, DoneStatus, McpServerSpec, ProviderId, SubagentActivity } from '@aio/core';
 
 export type Author = ProviderId | 'user' | 'system';
 
@@ -42,6 +42,8 @@ export type RoomEvent =
   | { type: 'text'; provider: ProviderId; text: string; partial: boolean }
   | { type: 'tool_call'; provider: ProviderId; name: string }
   | { type: 'tool_result'; provider: ProviderId; name?: string; isError: boolean }
+  | ({ type: 'subagent'; provider: ProviderId } & SubagentActivity)
+  | { type: 'preview'; provider: ProviderId; url: string }
   | { type: 'limit'; provider: ProviderId; status: string; window?: string; resetsAt?: number; usedPercent?: number }
   | { type: 'turn_end'; result: TurnResult }
   | { type: 'skipped'; provider: ProviderId; reason: string };

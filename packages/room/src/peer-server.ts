@@ -37,8 +37,9 @@ const asError = (text: string) => ({ isError: true, content: [{ type: 'text' as 
  */
 export function createPeerServer(options: PeerServerOptions): McpServer {
   const { self, peers } = options;
+  const report = options.onActivity ? peerActivityReporter(self, options.onActivity) : undefined;
   const room = new Room({ adapters: options.adapters, cwd: options.cwd, transcript: options.transcript, usage: options.usage,
-    onEvent: options.onActivity ? peerActivityReporter(self, options.onActivity) : undefined });
+    onEvent: (event) => { if (event.type !== 'turn_end') report?.(event); } });
   let asks = 0;
 
   const server = new McpServer({ name: 'aio-room', version: '0.1.0' });
@@ -84,6 +85,7 @@ export function createPeerServer(options: PeerServerOptions): McpServer {
         effort: options.team?.[peer]?.effort || undefined,
         timeoutMs: options.askTimeoutMs ?? 180_000,
       });
+      report?.({ type: 'turn_end', result });
       return result.status === 'ok' ? asText(result.text) : asError(`${NAMES[peer]} could not answer: ${result.error ?? 'unknown error'}`);
     },
   );

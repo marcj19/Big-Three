@@ -1,9 +1,10 @@
-import type { Adapter, AgentEvent, McpServerSpec, ProviderId } from '@aio/core';
+import type { Adapter, AgentEvent, McpServerSpec, ProviderId, UserQuestion } from '@aio/core';
 import { peerServerSpec, type PeerServerLaunch } from './peer-launch.js';
 import { buildPrompt } from './prompt.js';
 import { FileTranscript, MemoryTranscript } from './transcript.js';
 import { looksRateLimited, UsageTracker } from './usage.js';
 import type { RoomEvent, RoomMessage, TranscriptStore, TurnOptions, TurnResult } from './types.js';
+import { parseQuestion } from './question.js';
 
 const DEFAULT_TIMEOUT_MS = 600_000;
 
@@ -14,6 +15,8 @@ export interface RoomConfig {
   transcript?: TranscriptStore;
   usage?: UsageTracker;
   onEvent?: (event: RoomEvent) => void;
+  onTranscript?: (provider?: ProviderId) => void;
+  onQuestion?: (provider: ProviderId, question: UserQuestion) => Promise<string | undefined>;
   /**
    * How to start the `room` MCP server for models that can use it. Needs a `FileTranscript`, because the server
    * is a separate process and shares the room through that file.
@@ -55,6 +58,7 @@ export class Room {
   /** A message from the user (the task, a correction). */
   async say(text: string): Promise<void> {
     await this.transcript.append({ author: 'user', text });
+    this.config.onTranscript?.();
   }
 
   messages(): Promise<RoomMessage[]> {
@@ -91,6 +95,7 @@ export class Room {
       // A failed turn is visible to the others, but never passed off as the model's own words.
       await this.transcript.append({ author: 'system', text: `${result.provider} could not answer: ${result.error ?? 'unknown error'}` });
     }
+    this.config.onTranscript?.(result.provider);
   }
 
   private async attempt(who: ProviderId | ProviderId[], instruction: string, options: TurnOptions, snapshot: RoomMessage[]): Promise<TurnResult> {
@@ -130,6 +135,26 @@ export class Room {
   }
 
   private async execute(provider: ProviderId, instruction: string, options: TurnOptions, snapshot: RoomMessage[]): Promise<TurnResult> {
+    const ask = this.config.onQuestion;
+    let turn = await this.executeTurn(provider, instruction, options, snapshot);
+    let questions = 0;
+    while (ask && turn.question && turn.result.status === 'ok') {
+      const { question, result } = turn;
+      if (++questions > 5) return { ...result, status: 'error', text: '', error: 'O modelo pediu esclarecimentos demais nesta etapa.' };
+      await this.transcript.append({ author: provider, text: question.question });
+      this.config.onTranscript?.(provider);
+      const beforeAnswer = (await this.transcript.list()).length;
+      const answer = options.signal?.aborted ? undefined : await ask(provider, question);
+      if (answer === undefined || options.signal?.aborted) return { ...result, status: 'cancelled', text: '' };
+      await this.say(answer);
+      const sessionId = this.config.adapters[provider]?.supportsResume ? result.sessionId : undefined;
+      const next = { ...options, sessionId, sinceIndex: beforeAnswer };
+      turn = await this.executeTurn(provider, `${instruction}\nContinue the same task using the user's answer to your clarification.`, next, await this.transcript.list());
+    }
+    return turn.result;
+  }
+
+  private async executeTurn(provider: ProviderId, instruction: string, options: TurnOptions, snapshot: RoomMessage[]): Promise<{ result: TurnResult; question?: UserQuestion }> {
     const adapter = this.config.adapters[provider]!;
     const peer = this.peerTools(provider, options);
     const extra = adapter.supportsMcp ? (options.mcpServers ?? []) : [];
@@ -144,6 +169,7 @@ export class Room {
       resumed,
       instruction,
       role: options.role,
+      interactive: !!this.config.onQuestion,
     });
     const emit = this.config.onEvent;
     emit?.({ type: 'turn_start', provider, instruction });
@@ -152,6 +178,7 @@ export class Room {
     let doneText: string | undefined;
     let status: TurnResult['status'] = 'ok';
     let error: string | undefined;
+    let nativeQuestion: UserQuestion | undefined;
     const usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
     const whole: string[] = [];
     const partial: string[] = [];
@@ -169,7 +196,7 @@ export class Room {
         signal: options.signal,
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       });
-      for await (const ev of events) {
+      turnEvents: for await (const ev of events) {
         switch (ev.type) {
           case 'session':
             sessionId = ev.sessionId;
@@ -183,6 +210,18 @@ export class Room {
             break;
           case 'tool_result':
             emit?.({ type: 'tool_result', provider, name: ev.name, isError: ev.isError === true });
+            break;
+          case 'subagent':
+          case 'preview':
+            emit?.({ ...ev, provider });
+            break;
+          case 'question':
+            if (this.config.onQuestion) {
+              // The headless CLI cannot accept the native tool's reply. Close this turn and continue with the transcript.
+              nativeQuestion = { question: ev.question, options: ev.options };
+              sessionId = undefined;
+              break turnEvents;
+            }
             break;
           case 'usage':
             usage.inputTokens += ev.inputTokens ?? 0;
@@ -209,7 +248,9 @@ export class Room {
     }
 
     // The CLI's own final answer wins; otherwise what streamed (a whole message beats concatenated deltas).
-    const text = (doneText ?? whole.at(-1) ?? partial.join('')).trim();
+    const rawText = (doneText ?? whole.at(-1) ?? partial.join('')).trim();
+    const question = nativeQuestion ?? (this.config.onQuestion && status === 'ok' ? parseQuestion(rawText) : undefined);
+    const text = question?.question ?? rawText;
     if (status === 'ok' && !text) {
       status = 'error';
       error = `${adapter.displayName} returned an empty answer`;
@@ -227,6 +268,6 @@ export class Room {
     };
     this.usage.record(result);
     emit?.({ type: 'turn_end', result });
-    return result;
+    return { result, question };
   }
 }

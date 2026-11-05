@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AgentEvent, Access, AuthStatus, ModelOption, RunRequest } from '../types.js';
 import { CliAdapter, DEFAULT_MODEL, isRecord, num, str, type BuiltInvocation, type Parser } from './base.js';
+import { commandPreviews } from '../preview.js';
 
 const PERMISSION_MODE: Record<Access, string> = {
   'read-only': 'plan',
@@ -49,7 +50,7 @@ export class ClaudeAdapter extends CliAdapter {
   }
 
   protected async build(req: RunRequest): Promise<BuiltInvocation> {
-    const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', PERMISSION_MODE[req.access ?? 'read-only']];
+    const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', PERMISSION_MODE[req.access ?? 'read-only']];
     if (req.model) args.push('--model', req.model);
     if (req.effort) args.push('--effort', req.effort);
     if (req.sessionId) args.push('--resume', req.sessionId);
@@ -74,30 +75,65 @@ export class ClaudeAdapter extends CliAdapter {
 
   protected createParser(): Parser {
     let sessionSeen = false;
+    let streamed = false;
+    const agents = new Map<string, string>();
+    const commandIds = new Set<string>();
     return (raw) => {
       if (!isRecord(raw)) return [];
       const events: AgentEvent[] = [];
       const type = str(raw.type);
 
-      if (type === 'system' && str(raw.subtype) === 'init') {
+      if (type === 'stream_event' && !raw.parent_tool_use_id && isRecord(raw.event)) {
+        if (raw.event.type === 'message_start') streamed = false;
+        const delta = raw.event.delta;
+        if (raw.event.type === 'content_block_delta' && isRecord(delta) && delta.type === 'text_delta' && typeof delta.text === 'string') {
+          streamed = true;
+          events.push({ type: 'text', text: delta.text, partial: true });
+        }
+      } else if (type === 'system' && str(raw.subtype) === 'init') {
         const id = str(raw.session_id);
         if (id && !sessionSeen) {
           sessionSeen = true;
           events.push({ type: 'session', sessionId: id });
         }
-      } else if (type === 'assistant' || type === 'user') {
+      } else if (type === 'system' && raw.ambient !== true) {
+        const taskId = str(raw.task_id), subtype = str(raw.subtype);
+        if (taskId && subtype === 'task_started' && (raw.task_type === 'local_agent' || raw.task_type === 'remote_agent')) {
+          agents.set(taskId, (str(raw.description) || 'Subagente').slice(0, 180));
+        }
+        const label = taskId && agents.get(taskId);
+        if (taskId && label && (subtype === 'task_started' || subtype === 'task_progress' || subtype === 'task_notification')) {
+          const status = subtype !== 'task_notification' ? 'running' : raw.status === 'completed' ? 'done' : raw.status === 'stopped' ? 'cancelled' : 'error';
+          events.push({ type: 'subagent', agentId: taskId, label, status, detail: (str(raw.summary) ?? str(raw.last_tool_name))?.slice(0, 240) });
+        }
+      } else if ((type === 'assistant' || type === 'user') && !raw.parent_tool_use_id) {
         const content = isRecord(raw.message) && Array.isArray(raw.message.content) ? raw.message.content : [];
         for (const block of content) {
           if (!isRecord(block)) continue;
           const kind = str(block.type);
-          if (type === 'assistant' && kind === 'text' && str(block.text)) {
+          if (type === 'assistant' && kind === 'text' && str(block.text) && !streamed) {
             events.push({ type: 'text', text: str(block.text)! });
           } else if (type === 'assistant' && kind === 'tool_use') {
-            events.push({ type: 'tool_call', name: str(block.name) ?? 'unknown', input: block.input });
+            const name = str(block.name) ?? 'unknown', id = str(block.id);
+            if (id && name === 'Bash') commandIds.add(id);
+            if (name === 'AskUserQuestion' && isRecord(block.input) && Array.isArray(block.input.questions)) {
+              const questions = block.input.questions.filter(isRecord).slice(0, 4);
+              const prompts = questions.map((q) => str(q.question)?.trim()).filter(Boolean);
+              const options = questions.length === 1 && Array.isArray(questions[0]?.options)
+                ? questions[0].options.filter(isRecord).map((option) => str(option.label)?.slice(0, 200)).filter((value): value is string => !!value).slice(0, 6)
+                : [];
+              if (prompts.length) events.push({ type: 'question', question: prompts.join('\n\n').slice(0, 4000), options });
+            }
+            events.push({ type: 'tool_call', name, input: block.input });
           } else if (type === 'user' && kind === 'tool_result') {
+            if (commandIds.delete(str(block.tool_use_id) ?? '') && !block.is_error) {
+              const output = str(block.content) ?? (Array.isArray(block.content) ? block.content.filter(isRecord).map((part) => str(part.text) ?? '').join('\n') : '');
+              for (const url of commandPreviews(output)) events.push({ type: 'preview', url });
+            }
             events.push({ type: 'tool_result', isError: block.is_error === true });
           }
         }
+        if (type === 'assistant') streamed = false;
       } else if (type === 'rate_limit_event') {
         // Observed live: { status: "allowed", resetsAt: <epoch seconds>, rateLimitType: "five_hour" }.
         const info = isRecord(raw.rate_limit_info) ? raw.rate_limit_info : {};

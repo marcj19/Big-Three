@@ -55,6 +55,7 @@ function updateSend(): void {
   }
   sendBtn.classList.toggle('stop', busy);
   const visible = busy || hasText;
+  sendBtn.disabled = state.sending && !busy;
   sendBtn.classList.toggle('idle', !visible);
   sendBtn.tabIndex = visible ? 0 : -1;
   sendBtn.setAttribute('aria-hidden', String(!visible));
@@ -391,6 +392,9 @@ function renderWarnings(): void {
 
 export function renderComposer(): void {
   renderOffice();
+  const awaitingAnswer = state.run?.conversationId === state.current?.meta.id && !!state.run?.questions.length;
+  promptEl.readOnly = awaitingAnswer;
+  promptEl.placeholder = awaitingAnswer ? 'Responda à pergunta no topo do chat…' : 'Pergunte ou peça qualquer coisa…';
   const open = pop ? popOwner?.dataset.fk : undefined;
   if (pop) {
     // keep the open popover's DOM across the re-render of the chips
