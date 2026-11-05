@@ -2,7 +2,7 @@ import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { configDir } from '@aio/db-broker';
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, session, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, session, type IpcMainInvokeEvent } from 'electron';
 import { AppService } from '../services/app-service.js';
 import { API_METHODS, type AppEvent } from '../shared/api.js';
 import { EmbeddedBrowser } from './browser.js';
@@ -63,6 +63,11 @@ for (const method of API_METHODS) {
     return (service[method] as (...a: unknown[]) => unknown)(...args);
   });
 }
+
+ipcMain.handle('aio:writeClipboardText', (event, text: unknown) => {
+  if (!fromOurPage(event) || typeof text !== 'string' || text.length > 4_000_000) throw new Error('Não foi possível copiar o texto.');
+  return clipboard.writeText(text);
+});
 
 function createWindow(): void {
   win = new BrowserWindow({

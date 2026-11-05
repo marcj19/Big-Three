@@ -1,6 +1,6 @@
 import type { MessageView, PendingQuestion, ProviderId, StepKind } from '../shared/api.js';
 import { splitQuestion, visibleReply } from '@aio/room/question';
-import { api } from './bridge.js';
+import { api, writeClipboardText } from './bridge.js';
 import { ctx } from './ctx.js';
 import { clear, formatTime, h, renderRichText, syncChildren } from './dom.js';
 import { normalizeChatMarkdown } from './markdown.js';
@@ -107,7 +107,7 @@ function toggleSidebar(): void {
 
 async function copy(code: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(code);
+    await writeClipboardText(code);
     toast('Copiado.', 'success');
   } catch {
     toast('Não foi possível copiar. Selecione o texto e use Ctrl+C.', 'error');

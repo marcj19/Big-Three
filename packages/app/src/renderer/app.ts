@@ -238,7 +238,7 @@ async function send(): Promise<void> {
     starting = undefined;
     state.run = { runId, conversationId, lead, live: [], questions: [], activePeers: new Set() };
     startHarnessRun(runId, input);
-    startOfficeRun(conversationId);
+    startOfficeRun(conversationId, runId);
     for (const event of request.events) onAppEvent(event);
     void refreshTranscript(conversationId);
   } catch (err) {

@@ -5,7 +5,11 @@ import { z } from 'zod';
 import type { PeerActivity } from '@aio/room';
 
 const provider = z.enum(['claude', 'gemini', 'codex']);
-const schema = z.object({ self: provider, peer: provider, activity: z.enum(['thinking', 'writing', 'tool', 'done', 'error', 'cancelled']), tool: z.string().max(160).optional() });
+const schema = z.object({
+  self: provider, peer: provider, activity: z.enum(['thinking', 'writing', 'tool', 'done', 'error', 'cancelled']),
+  tool: z.string().max(160).optional(),
+  failure: z.enum(['timeout', 'missing-response', 'command-approval', 'write-approval', 'usage-limit']).optional(),
+});
 export function parsePeerActivity(line: string): PeerActivity | undefined {
   try { const result = schema.safeParse(JSON.parse(line)); return result.success && result.data.self !== result.data.peer ? result.data : undefined; } catch { return undefined; }
 }

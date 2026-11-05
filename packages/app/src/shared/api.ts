@@ -3,6 +3,7 @@
  * here can carry a password out of the app: passwords only ever travel from the window to the vault.
  */
 import type { SubagentActivity, UserQuestion } from '@aio/core';
+import type { PeerActivity } from '@aio/room';
 
 export type ProviderId = 'claude' | 'gemini' | 'codex';
 export type Access = 'read-only' | 'edit' | 'full';
@@ -173,7 +174,7 @@ export type AppEvent =
   | { type: 'update'; state: UpdateState }
   | { type: 'browser'; state: BrowserState }
   | { type: 'login'; provider: ProviderId; event: LoginEventView }
-  | { type: 'peer_activity'; runId: string; conversationId: string; self: ProviderId; peer: ProviderId; activity: 'thinking' | 'writing' | 'tool' | 'done' | 'error' | 'cancelled'; tool?: string }
+  | ({ type: 'peer_activity'; runId: string; conversationId: string } & PeerActivity)
   | { type: 'room'; runId: string; conversationId: string; event: RoomEventView }
   | { type: 'step'; runId: string; conversationId: string; step: StepEventView }
   | { type: 'transcript'; runId: string; conversationId: string; provider?: ProviderId }

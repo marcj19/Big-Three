@@ -1,6 +1,8 @@
 import type { AppEvent, ProviderId } from '../shared/api.js';
+import { peerFailureDetail } from '../shared/work-trace.js';
 import { ctx } from './ctx.js';
 import { h } from './dom.js';
+import { showRunActivity } from './harness.js';
 import { canLead, NAMES, PROVIDERS, provider, saveConfig, state } from './state.js';
 import { appearance, setAppearance } from './theme.js';
 import { ACTIVITY_BUBBLES, nextActivities, officeStatus, STATUS_LABELS, type Activities, type OfficeStatus } from './office-model.js';
@@ -17,6 +19,7 @@ const cards = new Map<ProviderId, HTMLButtonElement>();
 const badges = new Map<ProviderId, HTMLElement>();
 const balloons = new Map<ProviderId, HTMLElement>();
 const notes: Partial<Record<ProviderId, string>> = {};
+const failures: Partial<Record<ProviderId, string>> = {};
 const lastStatuses: Partial<Record<ProviderId, OfficeStatus>> = {};
 const expires: Partial<Record<ProviderId, number>> = {};
 let bubbleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -24,6 +27,7 @@ let wardrobe: Wardrobe = loadWardrobe();
 let selected: ProviderId = 'claude';
 let activities: Activities = {};
 let activityConversation: string | undefined;
+let activityRunId: string | undefined;
 let scene: OfficeScene | undefined;
 let generation = 0;
 let enabled = false;
@@ -86,7 +90,7 @@ export function renderOffice(): void {
   }
   clearTimeout(bubbleTimer);
   if (nextExpiry !== Infinity) bubbleTimer = setTimeout(renderOffice, Math.max(1, nextExpiry - now));
-  const view = JSON.stringify([values, texts, selected, state.config.lead.provider, !!state.run]);
+  const view = JSON.stringify([values, texts, failures, selected, state.config.lead.provider, !!state.run]);
   if (view === lastView) return;
   lastView = view;
   scene?.update(values);
@@ -94,6 +98,7 @@ export function renderOffice(): void {
     const card = cards.get(id)!;
     card.dataset.status = values[id];
     card.setAttribute('aria-pressed', String(id === selected));
+    card.title = values[id] === 'error' ? failures[id] ?? 'Ver detalhes da execução' : '';
     badges.get(id)!.textContent = STATUS_LABELS[values[id]];
     const balloon = balloons.get(id)!;
     balloon.hidden = !texts[id];
@@ -102,10 +107,13 @@ export function renderOffice(): void {
       ['done', 'error', 'limited', 'cancelled'].includes(values[id]) ? '' : h('span', { class: 'office-dots' }, h('i'), h('i'), h('i')));
   }
   const p = provider(selected);
+  const failedRun = values[selected] === 'error' ? activityRunId : undefined;
   detail.replaceChildren(
     h('span', { class: `office-dot ${selected}`, 'aria-hidden': 'true' }),
     h('div', { class: 'grow' }, h('b', {}, NAMES[selected]),
-      h('p', { class: 'muted small' }, `${state.config.lead.provider === selected ? 'Líder da conversa' : 'Colega da equipe'} · ${STATUS_LABELS[values[selected]]}`)),
+      h('p', { class: 'muted small' }, `${state.config.lead.provider === selected ? 'Líder da conversa' : 'Colega da equipe'} · ${STATUS_LABELS[values[selected]]}`),
+      failedRun && failures[selected] ? h('p', { class: 'muted small' }, failures[selected]!) : ''),
+    failedRun ? h('button', { type: 'button', class: 'btn text', onClick: () => showRunActivity(failedRun) }, 'Ver detalhes') : '',
     h('button', { type: 'button', class: 'btn tonal', disabled: !!state.run || !p?.available || p.signedIn === false,
       onClick: () => {
         if (state.config.lead.provider !== selected) {
@@ -119,11 +127,12 @@ export function renderOffice(): void {
   );
 }
 
-export function startOfficeRun(conversationId: string): void {
+export function startOfficeRun(conversationId: string, runId: string): void {
   activities = {};
-  for (const id of PROVIDERS) { delete notes[id]; delete lastStatuses[id]; delete expires[id]; }
+  for (const id of PROVIDERS) { delete notes[id]; delete failures[id]; delete lastStatuses[id]; delete expires[id]; }
   activities[state.config.lead.provider] = 'thinking';
   activityConversation = conversationId;
+  activityRunId = runId;
   renderOffice();
 }
 
@@ -132,9 +141,16 @@ export function onOfficeEvent(event: AppEvent): void {
   if (event.type === 'peer_activity') {
     notes[event.self] = `Consultando ${NAMES[event.peer]}…`;
     notes[event.peer] = event.activity === 'writing' ? `Respondendo a ${NAMES[event.self]}…` : `Analisando a consulta de ${NAMES[event.self]}…`;
+    if (event.activity === 'error') failures[event.peer] = peerFailureDetail(event.failure);
+    else delete failures[event.peer];
+  } else if (event.type === 'room' && event.event.type === 'turn_end') {
+    const turn = event.event;
+    delete notes[turn.provider];
+    if (turn.status === 'error' && turn.error) failures[turn.provider] = turn.error.slice(0, 320);
+    else delete failures[turn.provider];
   } else if (event.type === 'room' && event.event.type === 'tool_result') {
     notes[event.event.provider] = event.event.isError ? 'A ferramenta retornou um problema. Vou conferir…' : 'Ferramenta concluída. Conferindo o resultado…';
-  } else if (event.type === 'room' && ['text', 'turn_start', 'turn_end', 'tool_call'].includes(event.event.type)) {
+  } else if (event.type === 'room' && ['text', 'turn_start', 'tool_call'].includes(event.event.type)) {
     delete notes[event.event.provider];
   } else if (event.type === 'run_done') for (const id of PROVIDERS) delete notes[id];
   renderOffice();

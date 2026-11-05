@@ -79,8 +79,8 @@ describe('model and effort choices', () => {
   it('passes model to Antigravity and effort to Codex in their own way', async () => {
     class SpyGemini extends GeminiAdapter {
       args: string[] = [];
-      protected override build(req: RunRequest) {
-        const b = super.build(req);
+      protected override async build(req: RunRequest) {
+        const b = await super.build(req);
         this.args = b.args;
         return b;
       }

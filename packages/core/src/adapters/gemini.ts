@@ -1,6 +1,7 @@
+import { mkdtemp, open, rm, rmdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { AgentEvent, Access, AuthStatus, ModelOption, RunRequest } from '../types.js';
+import type { AgentError, AgentEvent, Access, AuthStatus, ModelOption, RunRequest } from '../types.js';
 import { CliAdapter, DEFAULT_MODEL, isRecord, num, str, type BuiltInvocation, type Parser } from './base.js';
 import { commandPreviews } from '../preview.js';
 
@@ -24,6 +25,29 @@ export function parseAgyModels(lines: string[]): ModelOption[] {
 
 /** The whole command line must stay under Windows' ~32k limit; the prompt is passed as an argument (see below). */
 const MAX_PROMPT_CHARS = 24_000;
+
+const NO_RESPONSE: AgentError = { type: 'error', code: 'missing-response', message: 'O Antigravity encerrou sem enviar uma resposta final. Confira as etapas da execução antes de continuar.' };
+
+async function missingResponse(log: string | undefined, reported = NO_RESPONSE): Promise<AgentError> {
+  if (!log) return reported;
+  // In print mode a denied tool can leave no error in stdout or stderr. Read only the tail of this run's log.
+  try {
+    const file = await open(log, 'r');
+    try {
+      const { size } = await file.stat();
+      const buffer = Buffer.alloc(Math.min(size, 32_768));
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, size - buffer.length);
+      const confirmation = [...buffer.toString('utf8', 0, bytesRead).matchAll(/^.{0,120}\.go:\d+\]\s+Print mode: soft-denying tool confirmation "(RunCommand|EditFile|WriteFile)"/gm)].at(-1)?.[1];
+      if (confirmation === 'RunCommand') return { type: 'error', code: 'command-approval', message: 'O Antigravity bloqueou um comando que exigia confirmação e encerrou sem enviar uma resposta.' };
+      if (confirmation) return { type: 'error', code: 'write-approval', message: 'O Antigravity bloqueou uma alteração de arquivo que exigia confirmação e encerrou sem enviar uma resposta.' };
+    } finally {
+      await file.close();
+    }
+  } catch {
+    // Older versions and failed starts may not produce a diagnostic log.
+  }
+  return reported;
+}
 
 /**
  * Gemini through the Antigravity CLI (`agy`). The standalone Gemini CLI now rejects personal Google accounts
@@ -71,7 +95,7 @@ export class GeminiAdapter extends CliAdapter {
     return { signedIn: 'unknown' };
   }
 
-  protected build(req: RunRequest): BuiltInvocation {
+  protected async build(req: RunRequest): Promise<BuiltInvocation> {
     if (req.mcpServers?.length) {
       // Failing loudly beats silently dropping the database tools the caller asked for.
       throw new Error('Injecting MCP servers is not supported for Antigravity yet');
@@ -83,7 +107,18 @@ export class GeminiAdapter extends CliAdapter {
     const args = [`-p=${prompt}`, '--output-format', 'stream-json', ...ACCESS_ARGS[req.access ?? 'read-only']];
     if (req.model) args.push('--model', req.model);
     if (req.sessionId) args.push('--conversation', req.sessionId);
-    return { args, stdin: '' };
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'aio-agy-')).catch(() => undefined);
+    const log = dir ? path.join(dir, 'run.log') : undefined;
+    if (log) args.push('--log-file', log);
+    return {
+      args,
+      stdin: '',
+      missingResponse: (reported) => missingResponse(log, reported),
+      cleanup: dir && log ? async () => {
+        try { await rm(log, { force: true }); }
+        finally { await rmdir(dir); }
+      } : undefined,
+    };
   }
 
   protected createParser(): Parser {
@@ -151,7 +186,7 @@ export class GeminiAdapter extends CliAdapter {
             events.push({ type: 'error', message: str(result.error)?.trim() || `Antigravity finished with status ${status ?? 'unknown'}` });
             events.push({ type: 'done', status: 'error', text });
           } else if (!text) {
-            events.push({ type: 'error', code: 'missing-response', message: 'O Antigravity encerrou sem enviar uma resposta final. Confira as etapas da execução antes de continuar.' });
+            events.push(NO_RESPONSE);
             events.push({ type: 'done', status: 'error' });
           } else {
             events.push({ type: 'done', status: 'ok', text });

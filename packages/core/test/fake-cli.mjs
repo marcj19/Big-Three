@@ -17,6 +17,12 @@ if (flags.includes('--version')) {
 }
 
 switch (mode) {
+  case 'agy-denied': {
+    const log = flags[flags.indexOf('--log-file') + 1];
+    writeFileSync(log, `I1105 16:06:49.349790     289 tool_confirmation_manager.go:221] Print mode: soft-denying tool confirmation "${flags[0]}" at step 2\n`);
+    out({ event: 'result', result: { status: 'SUCCESS', response: '' } });
+    break;
+  }
   case 'authcli':
   case 'authcli-stuck': {
     // Simulates `claude auth status|login`: signed-in state lives in the file given as the first flag.

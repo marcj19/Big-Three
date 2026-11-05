@@ -7,7 +7,7 @@ interface Bridge {
 
 declare global {
   interface Window {
-    aioBridge?: Bridge;
+    aioBridge?: Bridge & { writeClipboardText(text: string): Promise<void> };
   }
 }
 
@@ -37,3 +37,8 @@ const bridge: Bridge = window.aioBridge ?? webBridge();
 
 export const api = Object.fromEntries(API_METHODS.map((m) => [m, (...args: unknown[]) => bridge.invoke(m, args)])) as unknown as Api;
 export const onEvent = (callback: (event: AppEvent) => void): (() => void) => bridge.onEvent(callback);
+
+export async function writeClipboardText(text: string): Promise<void> {
+  if (window.aioBridge) await window.aioBridge.writeClipboardText(text);
+  else await navigator.clipboard.writeText(text);
+}

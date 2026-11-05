@@ -44,7 +44,7 @@ export interface RunRequest {
 }
 
 export type DoneStatus = 'ok' | 'error' | 'cancelled';
-export type AgentErrorCode = 'timeout' | 'missing-response';
+export type AgentErrorCode = 'timeout' | 'missing-response' | 'command-approval' | 'write-approval';
 
 export interface UserQuestion {
   question: string;
@@ -73,6 +73,8 @@ export type AgentEvent =
   | { type: 'error'; message: string; code?: AgentErrorCode }
   /** Always the last event of a run. */
   | { type: 'done'; status: DoneStatus; text?: string };
+
+export type AgentError = Extract<AgentEvent, { type: 'error' }>;
 
 export interface Availability {
   available: boolean;

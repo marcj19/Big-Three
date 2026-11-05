@@ -1,5 +1,18 @@
 import type { AppEvent, ProviderId, RunRecord, StartRun, WorkEntry } from './api.js';
 
+type PeerFailure = Extract<AppEvent, { type: 'peer_activity' }>['failure'];
+const PEER_FAILURE: Record<NonNullable<PeerFailure>, string> = {
+  timeout: 'A consulta atingiu o limite de tempo.',
+  'missing-response': 'O modelo encerrou sem enviar uma resposta.',
+  'command-approval': 'O Antigravity bloqueou um comando que exigia confirmação.',
+  'write-approval': 'O Antigravity bloqueou uma alteração de arquivo que exigia confirmação.',
+  'usage-limit': 'O modelo atingiu o limite de uso.',
+};
+
+export function peerFailureDetail(failure: PeerFailure): string {
+  return failure ? PEER_FAILURE[failure] : 'A consulta terminou com erro.';
+}
+
 const NAMES: Record<ProviderId, string> = { claude: 'Claude', gemini: 'Gemini', codex: 'Codex' };
 const STEPS = { answer: 'Resposta', plan: 'Planejamento', execute: 'Implementação', review: 'Revisão', revise: 'Ajustes', debate: 'Debate' };
 export function toolLabel(name: string): string {
@@ -65,7 +78,8 @@ export function recordWork(record: RunRecord, event: AppEvent, at = new Date().t
       entry = record.entries.at(-1)!;
     }
     entry.detail = event.activity === 'thinking' ? `${NAMES[event.peer]} está analisando a consulta` : event.activity === 'writing' ? `${NAMES[event.peer]} está preparando a resposta`
-      : event.activity === 'tool' ? `${NAMES[event.peer]}: ${toolLabel(event.tool ?? '')}` : 'Consulta encerrada';
+      : event.activity === 'tool' ? `${NAMES[event.peer]}: ${toolLabel(event.tool ?? '')}`
+        : event.activity === 'error' ? peerFailureDetail(event.failure) : 'Consulta encerrada';
     if (['done', 'error', 'cancelled'].includes(event.activity)) entry.status = event.activity as 'done' | 'error' | 'cancelled';
   } else if (event.type === 'question') {
     add({ kind: 'question', activityId: event.question.id, provider: event.question.provider, status: 'running', label: 'Aguardando sua resposta' });

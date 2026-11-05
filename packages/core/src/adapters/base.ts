@@ -2,7 +2,7 @@ import os from 'node:os';
 import { resolveCommand, type ResolvedCommand } from '../command.js';
 import { sanitizeEnv } from '../env.js';
 import { CliAbortError, CliExitError, runProcess } from '../runner.js';
-import type { AgentEvent, Adapter, AuthStatus, Availability, LoginEvent, ModelOption, ProviderId, RunRequest } from '../types.js';
+import type { AgentError, AgentEvent, Adapter, AuthStatus, Availability, LoginEvent, ModelOption, ProviderId, RunRequest } from '../types.js';
 
 export interface AdapterOptions {
   /** Explicit executable path; skips PATH search. */
@@ -18,6 +18,8 @@ export interface AdapterOptions {
 export interface BuiltInvocation {
   args: string[];
   stdin: string;
+  /** Some CLIs log the cause separately when they end without a final reply. */
+  missingResponse?: (reported?: AgentError) => Promise<AgentError>;
   /** Removes temp files created for this run. */
   cleanup?: () => Promise<void>;
 }
@@ -179,13 +181,23 @@ export abstract class CliAdapter implements Adapter {
         for (const event of parse(raw)) {
           if (finished) break;
           if (event.type === 'done') finished = true;
-          yield event.type === 'error' ? { ...event, message: friendlyError(this.displayName, event.message) } : event;
+          if (event.type === 'error') {
+            const error = event.code === 'missing-response' ? await built.missingResponse?.(event) ?? event : event;
+            yield { ...error, message: friendlyError(this.displayName, error.message) };
+          } else {
+            yield event;
+          }
         }
         if (finished) break;
       }
       if (!finished) {
         finished = true;
-        yield { type: 'done', status: 'ok' };
+        if (built.missingResponse) {
+          yield await built.missingResponse();
+          yield { type: 'done', status: 'error' };
+        } else {
+          yield { type: 'done', status: 'ok' };
+        }
       }
     } catch (err) {
       if (finished) return;

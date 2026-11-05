@@ -25,17 +25,24 @@ describe('MCP visual activity bridge', () => {
     const claude = stub('claude', (req) => {
       const file = req.mcpServers?.find((s) => s.name === 'room')?.env?.AIO_ROOM_ACTIVITY_FILE;
       // The fake CLI writes the same metadata as the real MCP server.
-      if (file) fileActivitySink(file)({ self: 'claude', peer: 'gemini', activity: 'thinking' });
+      if (file) {
+        const write = fileActivitySink(file);
+        write({ self: 'claude', peer: 'gemini', activity: 'thinking' });
+        write({ self: 'claude', peer: 'gemini', activity: 'error', failure: 'command-approval' });
+      }
       return [{ type: 'done', status: 'ok', text: 'Done' }];
     });
     const { app, events, workdir, done } = await makeApp({ adapters: { claude, gemini: stub('gemini', 'Peer') } });
     const conv = await app.createConversation({ cwd: workdir });
     const { runId } = await app.startRun({ conversationId: conv.id, prompt: 'Ask Gemini', connections: [], peerTools: true,
       spec: { kind: 'lead', lead: { provider: 'claude' }, team: [{ provider: 'gemini' }], fallback: false, access: 'read-only' } });
-    await done(conv.id);
+    expect((await done(conv.id)).outcome.status).toBe('ok');
     const activity = events.findIndex((event) => event.type === 'peer_activity');
     expect(activity).toBeGreaterThanOrEqual(0);
     expect(events[activity]).toMatchObject({ type: 'peer_activity', runId, conversationId: conv.id, peer: 'gemini', activity: 'thinking' });
     expect(activity).toBeLessThan(events.findIndex((event) => event.type === 'run_done'));
+    expect((await app.runHistory(conv.id))[0]?.entries).toContainEqual(expect.objectContaining({
+      kind: 'consult', peer: 'gemini', status: 'error', detail: 'O Antigravity bloqueou um comando que exigia confirmação.',
+    }));
   });
 });

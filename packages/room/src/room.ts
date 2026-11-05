@@ -169,7 +169,9 @@ export class Room {
       transcript: resumed ? snapshot.filter((m) => m.index > (options.sinceIndex ?? 0)) : snapshot,
       resumed,
       instruction,
-      role: options.role,
+      role: provider === 'gemini' && (options.access ?? 'read-only') === 'read-only'
+        ? [options.role, 'This turn has read-only access. Use file-reading and search tools to inspect the project. Avoid shell commands and file changes because this session cannot ask for tool approval. If an action is blocked, answer using the evidence already available and explain what could not be verified.'].filter(Boolean).join('\n')
+        : options.role,
       interactive: !!this.config.onQuestion,
     });
     const emit = this.config.onEvent;

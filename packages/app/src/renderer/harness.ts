@@ -1,7 +1,7 @@
 import type { AppEvent, BrowserState, MessageView, RunRecord, StartRun, WorkspaceDirectory, WorkspaceFile } from '../shared/api.js';
 import { newRunRecord, recordWork } from '../shared/work-trace.js';
 import { browserUrl } from '../shared/browser-url.js';
-import { api } from './bridge.js';
+import { api, writeClipboardText } from './bridge.js';
 import { ctx } from './ctx.js';
 import { formatTime, h, keepFocus, renderRichText } from './dom.js';
 import { icon, providerMark } from './icons.js';
@@ -76,7 +76,10 @@ export function matchRun(message: MessageView, runs: RunRecord[]): RunRecord | u
 }
 export function workCard(run: RunRecord, existing?: HTMLElement): HTMLElement {
   const el = existing ?? h('section', { class: 'chat-work-card', 'aria-label': 'Resumo do trabalho da equipe' });
-  const last = run.entries.slice().reverse().find((entry) => !['start', 'finish'].includes(entry.kind));
+  const newest = run.entries.slice().reverse();
+  const last = newest.find((entry) => !['start', 'finish'].includes(entry.kind));
+  const failedConsult = newest.find((entry) => entry.kind === 'consult' && entry.status === 'error');
+  const error = newest.find((entry) => entry.kind === 'finish' && entry.status === 'error');
   const waiting = run.entries.some((entry) => entry.kind === 'question' && entry.status === 'running');
   const providers = [...new Set(run.entries.flatMap((entry) => [entry.provider, entry.peer].filter((id): id is NonNullable<typeof id> => !!id)))];
   const counts = [
@@ -85,12 +88,14 @@ export function workCard(run: RunRecord, existing?: HTMLElement): HTMLElement {
     [run.entries.filter((entry) => entry.kind === 'subagent').length, 'subagente', 'subagentes'],
   ] as const;
   const summary = counts.filter(([count]) => count > 0).map(([count, single, plural]) => `${count} ${count === 1 ? single : plural}`).join(' · ');
-  const key = JSON.stringify([run.status, last, waiting, providers, run.entries.length, run.previewUrl]);
+  const key = JSON.stringify([run.status, last, waiting, providers, run.entries.length, run.previewUrl, failedConsult, error]);
   if (el.dataset.view === key) return el;
   el.dataset.view = key;
   el.replaceChildren(h('div', { class: 'chat-work-head' }, h('span', { class: 'chat-work-avatars' }, ...providers.map((id) => h('span', { class: 'avatar xs', title: NAMES[id] }, providerMark(id)))),
     h('b', {}, run.status === 'running' ? waiting ? 'Aguardando sua resposta' : 'Execução em andamento' : `Execução ${run.status === 'ok' ? 'concluída' : run.status === 'cancelled' ? 'cancelada' : 'com erro'}`)),
     waiting ? '' : h('p', {}, run.status === 'running' ? last?.detail ?? last?.label ?? 'Preparando a tarefa…' : summary),
+    error?.detail ? h('p', {}, error.detail) : '',
+    failedConsult?.peer ? h('p', {}, `${NAMES[failedConsult.peer]} · ${failedConsult.detail ?? 'A consulta terminou com erro.'}`) : '',
     h('div', { class: 'chat-work-actions' },
       h('button', { class: 'btn text', type: 'button', onClick: () => showRunActivity(run.id) }, 'Ver etapas e detalhes'),
       run.previewUrl ? h('button', { class: 'btn tonal', type: 'button', onClick: () => openProjectPreview(run.previewUrl!) }, 'Abrir prévia') : ''));
@@ -234,7 +239,7 @@ function renderFilePreview(): void {
   const content = h('pre', { class: 'source-view', tabindex: '0', 'aria-label': `Conteúdo de ${file.path}` }, ...lines.slice(0, 2500).map((line, index) => h('span', { class: 'source-line', 'data-line': String(index + 1) }, line || ' ')));
   filePreview.replaceChildren(h('div', { class: 'file-preview-head' }, h('b', { title: file.path }, file.path), h('span', { class: 'muted small' }, `${file.bytes.toLocaleString('pt-BR')} bytes · leitura`)),
     file.binary ? h('p', { class: 'file-note' }, 'Este arquivo é binário. A prévia mostra somente arquivos de texto.') : h('div', { class: 'file-preview-actions' },
-      h('button', { class: 'btn', type: 'button', onClick: () => void navigator.clipboard.writeText(file.text).then(() => toast('Trecho copiado.'), fail) }, 'Copiar'),
+      h('button', { class: 'btn', type: 'button', onClick: () => void writeClipboardText(file.text).then(() => toast('Trecho copiado.'), fail) }, 'Copiar'),
       h('button', { class: 'btn tonal', type: 'button', onClick: () => {
         const prompt = document.getElementById('prompt') as HTMLTextAreaElement;
         ctx.setPrompt(`${prompt.value}${prompt.value ? '\n\n' : ''}Arquivo: ${file.path}\n\n${file.text.slice(0, 12000)}`);

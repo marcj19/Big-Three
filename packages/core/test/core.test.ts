@@ -296,11 +296,20 @@ describe('GeminiAdapter (Antigravity CLI)', () => {
     expect(events.at(-1)).toEqual({ type: 'done', status: 'error' });
   });
 
+  it.each([
+    ['RunCommand', 'command-approval', 'bloqueou um comando'],
+    ['EditFile', 'write-approval', 'bloqueou uma alteração de arquivo'],
+  ])('diagnoses a silent %s denial from this run’s log', async (tool, code, reason) => {
+    const events = await collect(new GeminiAdapter({ command: fake('agy-denied', tool) }));
+    expect(events.at(-2)).toMatchObject({ type: 'error', code, message: expect.stringContaining(reason) });
+    expect(events.at(-1)).toEqual({ type: 'done', status: 'error' });
+  });
+
   it('attaches the prompt to -p= (the only form agy accepts), keeps stdin empty and defaults to plan mode', async () => {
     let built: { args: string[]; stdin: string } | undefined;
     class Spy extends GeminiAdapter {
-      protected override build(req: RunRequest) {
-        built = super.build(req);
+      protected override async build(req: RunRequest) {
+        built = await super.build(req);
         return built;
       }
     }

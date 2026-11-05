@@ -16,4 +16,14 @@ describe('peer activity metadata', () => {
     const report = peerActivityReporter('claude', () => { throw new Error('disk unavailable'); });
     expect(() => report({ type: 'turn_start', provider: 'gemini', instruction: '' })).not.toThrow();
   });
+
+  it('sends an allowlisted cause for peer failures without the raw CLI message', () => {
+    const events: PeerActivity[] = [];
+    const report = peerActivityReporter('codex', (event) => events.push(event));
+    report({ type: 'turn_end', result: {
+      provider: 'gemini', status: 'error', text: '', error: 'private command and arguments', errorCode: 'command-approval',
+      usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 }, rateLimited: false,
+    } });
+    expect(events).toEqual([{ self: 'codex', peer: 'gemini', activity: 'error', failure: 'command-approval' }]);
+  });
 });
