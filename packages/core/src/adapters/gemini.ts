@@ -4,10 +4,11 @@ import type { AgentEvent, Access, AuthStatus, ModelOption, RunRequest } from '..
 import { CliAdapter, DEFAULT_MODEL, isRecord, num, str, type BuiltInvocation, type Parser } from './base.js';
 import { commandPreviews } from '../preview.js';
 
-const MODE: Record<Access, string> = {
-  'read-only': 'plan',
-  edit: 'accept-edits',
-  full: 'auto',
+const ACCESS_ARGS: Record<Access, string[]> = {
+  'read-only': ['--mode', 'plan'],
+  edit: ['--mode', 'accept-edits'],
+  // Auto can silently fall back to interactive review. Full access was already granted by the caller.
+  full: ['--mode', 'accept-edits', '--dangerously-skip-permissions'],
 };
 
 export function parseAgyModels(lines: string[]): ModelOption[] {
@@ -79,7 +80,7 @@ export class GeminiAdapter extends CliAdapter {
     if (prompt.length > MAX_PROMPT_CHARS) {
       throw new Error(`Prompt is ${prompt.length} characters; the Antigravity CLI takes it as an argument and the limit is ${MAX_PROMPT_CHARS}`);
     }
-    const args = [`-p=${prompt}`, '--output-format', 'stream-json', '--mode', MODE[req.access ?? 'read-only']];
+    const args = [`-p=${prompt}`, '--output-format', 'stream-json', ...ACCESS_ARGS[req.access ?? 'read-only']];
     if (req.model) args.push('--model', req.model);
     if (req.sessionId) args.push('--conversation', req.sessionId);
     return { args, stdin: '' };
@@ -130,6 +131,8 @@ export class GeminiAdapter extends CliAdapter {
             const name = str(step.tool_name) ?? str(info.name) ?? kind;
             if (index !== undefined && !startedTools.has(index)) {
               startedTools.add(index);
+              // Text before a tool is often a progress update rather than the answer to the turn.
+              if (kind === 'tool') assistantText = '';
               events.push({ type: 'tool_call', name, input: info.parameters });
             }
             const isError = (step.error ?? info.error) != null;
@@ -143,9 +146,16 @@ export class GeminiAdapter extends CliAdapter {
           const usage = isRecord(result.usage) ? result.usage : {};
           events.push({ type: 'usage', inputTokens: num(usage.input_tokens), outputTokens: num(usage.output_tokens) });
           const status = str(result.status);
-          const ok = status === 'SUCCESS';
-          if (!ok) events.push({ type: 'error', message: `Antigravity finished with status ${status ?? 'unknown'}` });
-          events.push({ type: 'done', status: ok ? 'ok' : 'error', text: (str(result.response) ?? assistantText).trim() || undefined });
+          const text = str(result.response)?.trim() || assistantText.trim() || undefined;
+          if (status !== 'SUCCESS') {
+            events.push({ type: 'error', message: str(result.error)?.trim() || `Antigravity finished with status ${status ?? 'unknown'}` });
+            events.push({ type: 'done', status: 'error', text });
+          } else if (!text) {
+            events.push({ type: 'error', code: 'missing-response', message: 'O Antigravity encerrou sem enviar uma resposta final. Confira as etapas da execução antes de continuar.' });
+            events.push({ type: 'done', status: 'error' });
+          } else {
+            events.push({ type: 'done', status: 'ok', text });
+          }
           break;
         }
       }

@@ -44,6 +44,7 @@ export interface RunRequest {
 }
 
 export type DoneStatus = 'ok' | 'error' | 'cancelled';
+export type AgentErrorCode = 'timeout' | 'missing-response';
 
 export interface UserQuestion {
   question: string;
@@ -69,7 +70,7 @@ export type AgentEvent =
   | { type: 'usage'; inputTokens?: number; outputTokens?: number; costUsd?: number }
   /** Subscription-limit state the CLI reported. `resetsAt` is epoch milliseconds. */
   | { type: 'limit'; status: string; window?: string; resetsAt?: number; usedPercent?: number }
-  | { type: 'error'; message: string; code?: 'timeout' }
+  | { type: 'error'; message: string; code?: AgentErrorCode }
   /** Always the last event of a run. */
   | { type: 'done'; status: DoneStatus; text?: string };
 

@@ -278,6 +278,24 @@ describe('GeminiAdapter (Antigravity CLI)', () => {
     ]);
   });
 
+  it('keeps the CLI error detail when a run fails', () => {
+    class Probe extends GeminiAdapter {
+      parse = this.createParser();
+    }
+    const events = new Probe().parse({ event: 'result', result: { status: 'ERROR', error: 'Quota exhausted' } });
+    expect(events.slice(-2)).toEqual([
+      { type: 'error', message: 'Quota exhausted' },
+      { type: 'done', status: 'error' },
+    ]);
+  });
+
+  it('does not use progress before an edit as the final answer when the CLI returns no response', async () => {
+    const events = await collect(new GeminiAdapter({ command: fake('replay', fixture('antigravity-empty.jsonl')) }));
+    expect(events).toContainEqual({ type: 'text', text: 'Vou abrir o arquivo.', partial: true });
+    expect(events.at(-2)).toMatchObject({ type: 'error', code: 'missing-response' });
+    expect(events.at(-1)).toEqual({ type: 'done', status: 'error' });
+  });
+
   it('attaches the prompt to -p= (the only form agy accepts), keeps stdin empty and defaults to plan mode', async () => {
     let built: { args: string[]; stdin: string } | undefined;
     class Spy extends GeminiAdapter {
@@ -291,6 +309,15 @@ describe('GeminiAdapter (Antigravity CLI)', () => {
     expect(built?.args[built.args.indexOf('--mode') + 1]).toBe('plan');
     expect(built?.args[built.args.indexOf('--conversation') + 1]).toBe('conv-1');
     expect(built?.stdin).toBe('');
+    expect(built?.args).not.toContain('--dangerously-skip-permissions');
+
+    await collect(new Spy({ command: fake('no-result') }), { access: 'edit' });
+    expect(built?.args).toContain('accept-edits');
+    expect(built?.args).not.toContain('--dangerously-skip-permissions');
+
+    await collect(new Spy({ command: fake('no-result') }), { access: 'full' });
+    expect(built?.args).toContain('--dangerously-skip-permissions');
+    expect(built?.args).not.toContain('auto');
   });
 
   it('refuses prompts that would overflow the Windows command line, and MCP injection it cannot honour', async () => {

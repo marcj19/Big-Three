@@ -96,14 +96,30 @@ describe('one model leads', () => {
     const { app, workdir, done } = await makeApp({ adapters: { claude, gemini }, confirmAccess: async () => true });
 
     const c1 = await app.createConversation({ cwd: workdir });
-    await app.startRun(lead(c1.id, { fallback: true }));
+    await app.startRun(lead(c1.id, { fallback: true, team: [{ provider: 'gemini' }] }));
     expect((await done(c1.id)).outcome).toMatchObject({ status: 'ok', final: 'Covered' });
 
     const before = gemini.requests.length;
     const c2 = await app.createConversation({ cwd: workdir });
-    await app.startRun(lead(c2.id, { fallback: true, access: 'edit' }));
+    await app.startRun(lead(c2.id, { fallback: true, access: 'edit', team: [{ provider: 'gemini' }] }));
     expect((await done(c2.id)).outcome.status).toBe('error');
     expect(gemini.requests.length).toBe(before);
+  });
+
+  it.each([
+    { message: 'Quota exhausted', status: 'ok', codexCalls: 1 },
+    { message: 'Antigravity returned no response', status: 'error', codexCalls: 0 },
+  ])('only an enabled teammate may take over a chat on a limit ($status)', async ({ message, status, codexCalls }) => {
+    const gemini = stub('gemini', () => [{ type: 'error', message }, { type: 'done', status: 'error' }]);
+    const claude = stub('claude', 'Disabled');
+    const codex = stub('codex', 'Covered');
+    const { app, workdir, done } = await makeApp({ adapters: { claude, gemini, codex } });
+    const conv = await app.createConversation({ cwd: workdir });
+    await app.startRun(lead(conv.id, { lead: { provider: 'gemini' }, fallback: true, team: [{ provider: 'codex' }] }));
+    expect((await done(conv.id)).outcome.status).toBe(status);
+    expect(gemini.requests[0]?.systemPrompt).not.toContain('with Claude');
+    expect(claude.requests).toHaveLength(0);
+    expect(codex.requests).toHaveLength(codexCalls);
   });
 });
 
@@ -173,11 +189,13 @@ describe('the lead keeps its own session', () => {
     expect(gemini.requests[0]!.prompt).toContain('Answer'); // Claude's earlier answer is in what it was told
   });
 
-  it('explains a configured timeout and does not replay work in a resumed session', async () => {
-    const message = 'O Codex atingiu o limite de tempo do turno.';
+  it.each([
+    { code: 'timeout', message: 'O Codex atingiu o limite de tempo do turno.' },
+    { code: 'missing-response', message: 'O Antigravity encerrou sem enviar uma resposta final.' },
+  ] as const)('explains $code without replaying work in a resumed session', async ({ code, message }) => {
     const codex = stub('codex', (req) => req.sessionId ? [
       { type: 'tool_call', name: 'shell' },
-      { type: 'error', code: 'timeout', message },
+      { type: 'error', code, message },
       { type: 'done', status: 'error' },
     ] : [
       { type: 'session', sessionId: 'saved' },

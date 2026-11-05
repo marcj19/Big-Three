@@ -1,4 +1,4 @@
-import type { Access, DoneStatus, McpServerSpec, ProviderId, SubagentActivity } from '@aio/core';
+import type { Access, AgentErrorCode, DoneStatus, McpServerSpec, ProviderId, SubagentActivity } from '@aio/core';
 
 export type Author = ProviderId | 'user' | 'system';
 
@@ -32,7 +32,7 @@ export interface TurnResult {
   sessionId?: string;
   usage: TurnUsage;
   error?: string;
-  errorCode?: 'timeout';
+  errorCode?: AgentErrorCode;
   /** The failure looks like a subscription limit, so trying another provider makes sense. */
   rateLimited: boolean;
 }
@@ -55,6 +55,8 @@ export interface TurnOptions {
   /** Applies to the first provider tried only: another model's name means nothing to a fallback provider. */
   model?: string;
   effort?: string;
+  /** Only try the next provider when the current provider has reached a usage limit. */
+  fallbackOnLimitOnly?: boolean;
   /** Continue this provider session (the first provider tried only). */
   sessionId?: string;
   /** With `sessionId`: the transcript position that session already knows; only later messages are sent again. */

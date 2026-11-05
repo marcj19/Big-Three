@@ -107,6 +107,7 @@ export class Room {
       if (!this.config.adapters[provider]) {
         this.config.onEvent?.({ type: 'skipped', provider, reason: 'not configured' });
         notes.push(`${provider}: not configured`);
+        if (options.fallbackOnLimitOnly) break;
         continue;
       }
       if (this.usage.isLimited(provider)) {
@@ -117,7 +118,7 @@ export class Room {
       // The model and the session belong to the first provider; another one starts from its own defaults.
       const own = provider === candidates[0] ? options : { ...options, model: undefined, effort: undefined, sessionId: undefined };
       last = await this.execute(provider, instruction, own, snapshot);
-      if (last.status !== 'error') return last;
+      if (last.status !== 'error' || (options.fallbackOnLimitOnly && !last.rateLimited)) return last;
       notes.push(`${provider}: ${last.error ?? 'failed'}`);
     }
     if (last) return candidates.length > 1 ? { ...last, error: notes.join('; ') } : last;

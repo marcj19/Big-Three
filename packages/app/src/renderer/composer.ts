@@ -280,7 +280,7 @@ function modelPop(): HTMLElement {
     h('p', { class: 'pop-title' }, 'Com quem você conversa'),
     row,
     h('div', { class: 'controls' }, ...modelControls(c.lead.provider, c.lead, 'Líder', () => { saveConfig(); renderComposer(); })),
-    switchRow('Trocar de modelo se atingir o limite', 'Só quando o líder está em somente leitura. Se pode editar arquivos, ele não é trocado.', () => c.fallback, (v) => (c.fallback = v)),
+    switchRow('Trocar de modelo se atingir o limite', 'Em somente leitura, um colega habilitado na equipe pode assumir se o líder atingir o limite de uso.', () => c.fallback, (v) => (c.fallback = v)),
   );
 }
 

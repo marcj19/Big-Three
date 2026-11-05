@@ -96,7 +96,7 @@ export class RunManager {
    * One model answers and, when it needs to, consults the team itself. Its own CLI session is continued from turn to
    * turn, so it remembers what it read and did; only what happened in the room since is sent again.
    */
-  private async runLead(runId: string, room: Room, input: StartRun, spec: Extract<StartRun['spec'], { kind: 'lead' }>, common: { cwd: string; signal: AbortSignal; timeoutMs: number; mcpServers?: McpServerSpec[] }): Promise<RunOutcome> {
+  private async runLead(runId: string, room: Room, input: StartRun, spec: Extract<StartRun['spec'], { kind: 'lead' }>, common: { cwd: string; signal: AbortSignal; timeoutMs: number; mcpServers?: McpServerSpec[] }, adapters: RunDeps['adapters']): Promise<RunOutcome> {
     const { deps } = this;
     const lead = spec.lead.provider;
     const meta = await deps.store.get(input.conversationId);
@@ -106,7 +106,7 @@ export class RunManager {
     if (team.length) {
       const report = peerActivityReporter(lead, (event) => this.publish({ type: 'peer_activity', runId, conversationId: input.conversationId, ...event }));
       const reviewRoom = new Room({
-        adapters: deps.adapters,
+        adapters,
         cwd: common.cwd,
         transcript: room.transcript,
         usage: deps.usage,
@@ -121,12 +121,12 @@ export class RunManager {
     }
 
     // Another model may stand in on a limit, but never while files may be changed.
-    const order: ProviderId[] = ['claude', 'gemini', 'codex'];
-    const candidates = [lead, ...(spec.fallback && spec.access === 'read-only' ? order.filter((p) => p !== lead && deps.adapters[p]) : [])];
+    const candidates = [lead, ...(spec.fallback && spec.access === 'read-only' ? room.providers.filter((p) => p !== lead) : [])];
     const turn = (session?: { id: string; upto: number }) =>
       room.turn(candidates, team.length ? "Answer the user's latest message. Consider the team's independent recommendations in the transcript." : "Answer the user's latest message.", {
         ...common,
         access: spec.access,
+        fallbackOnLimitOnly: true,
         model: spec.lead.model,
         effort: spec.lead.effort,
         withPeerTools: input.peerTools,
@@ -136,7 +136,7 @@ export class RunManager {
 
     let result = await turn(meta.sessions?.[lead]);
     // A session that no longer exists (or was cut short) must not trap the conversation: start over with the transcript.
-    if (result.status === 'error' && meta.sessions?.[lead] && !result.rateLimited && result.errorCode !== 'timeout') {
+    if (result.status === 'error' && meta.sessions?.[lead] && !result.rateLimited && !result.errorCode && !deps.usage.isLimited(lead)) {
       await deps.store.setSession(input.conversationId, lead, undefined);
       result = await turn(undefined);
     }
@@ -149,6 +149,9 @@ export class RunManager {
   private async execute(runId: string, input: StartRun, cwd: string, abort: AbortController, allowPreview: boolean): Promise<void> {
     const { deps } = this;
     const conversationId = input.conversationId;
+    const { spec } = input;
+    const allowed = spec.kind === 'lead' ? new Set([spec.lead.provider, ...spec.team.map((member) => member.provider)]) : undefined;
+    const adapters = allowed ? Object.fromEntries(Object.entries(deps.adapters).filter(([provider, adapter]) => adapter && allowed.has(provider as ProviderId))) : deps.adapters;
     let outcome: RunOutcome;
     let activity: Awaited<ReturnType<typeof watchPeerActivity>> | undefined;
     let previewUrl: string | undefined;
@@ -176,7 +179,7 @@ export class RunManager {
         }).catch(() => undefined);
       }
       const room = new Room({
-        adapters: deps.adapters,
+        adapters,
         cwd,
         transcript: deps.store.transcript(conversationId),
         usage: deps.usage,
@@ -191,8 +194,6 @@ export class RunManager {
       const db = input.connections.length ? deps.databaseTools(input.connections) : undefined;
       // Desktop tasks can run long commands and are always stoppable from the UI.
       const common = { cwd, signal: abort.signal, timeoutMs: deps.timeoutMs ?? 0, withPeerTools: input.peerTools, mcpServers: db ? [db] : undefined };
-      const { spec } = input;
-
       if (spec.kind === 'chat') {
         await room.say(input.prompt);
         const r = await room.turn(spec.providers, "Answer the user's latest message.", { ...common, access: spec.access });
@@ -204,7 +205,7 @@ export class RunManager {
           await planExecute(room, { task: input.prompt, planner: spec.planner, executor: spec.executor, executorAccess: spec.executorAccess, reviewer: spec.reviewer, ...common }),
         );
       } else if (spec.kind === 'lead') {
-        outcome = await this.runLead(runId, room, input, spec, common);
+        outcome = await this.runLead(runId, room, input, spec, common, adapters);
       } else if (spec.kind === 'flow') {
         const order: ProviderId[] = ['claude', 'gemini', 'codex'];
         const steps: FlowStep[] = spec.steps.map((s) => ({
