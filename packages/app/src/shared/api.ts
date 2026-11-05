@@ -137,6 +137,15 @@ export interface UsageView {
   outputTokens: number;
   limitedUntil?: number;
   window?: { status: string; name?: string; resetsAt?: number };
+  windows?: { status: string; name?: string; resetsAt?: number; usedPercent?: number; observedAt: number }[];
+}
+
+export interface AccountQuota {
+  provider: ProviderId;
+  source: 'account' | 'events' | 'unavailable';
+  checkedAt?: number;
+  message: string;
+  windows: { name: string; usedPercent?: number; resetsAt?: number; status?: string; observedAt?: number }[];
 }
 
 export interface ConnectionTest {
@@ -151,12 +160,15 @@ export type RoomEventView =
   | { type: 'turn_start'; provider: ProviderId; instruction: string }
   | { type: 'text'; provider: ProviderId; text: string; partial: boolean }
   | { type: 'tool_call'; provider: ProviderId; name: string }
-  | { type: 'limit'; provider: ProviderId; status: string; window?: string; resetsAt?: number }
+  | { type: 'tool_result'; provider: ProviderId; name?: string; isError: boolean }
+  | { type: 'limit'; provider: ProviderId; status: string; window?: string; resetsAt?: number; usedPercent?: number }
   | { type: 'skipped'; provider: ProviderId; reason: string }
   | { type: 'turn_end'; provider: ProviderId; status: 'ok' | 'error' | 'cancelled'; error?: string; inputTokens: number; outputTokens: number };
 
 export type AppEvent =
+  | { type: 'browser'; state: BrowserState }
   | { type: 'login'; provider: ProviderId; event: LoginEventView }
+  | { type: 'peer_activity'; runId: string; conversationId: string; self: ProviderId; peer: ProviderId; activity: 'thinking' | 'writing' | 'tool' | 'done' | 'error' | 'cancelled'; tool?: string }
   | { type: 'room'; runId: string; conversationId: string; event: RoomEventView }
   | { type: 'step'; runId: string; conversationId: string; step: StepEventView }
   | { type: 'run_done'; runId: string; conversationId: string; outcome: RunOutcome };
@@ -185,9 +197,17 @@ export interface Api {
   startRun(input: StartRun): Promise<{ runId: string }>;
   cancelRun(runId: string): Promise<void>;
   usage(): Promise<Record<string, UsageView>>;
+  accountQuotas(): Promise<AccountQuota[]>;
 
   /** Native folder picker; null when cancelled or unavailable. */
   pickFolder(): Promise<string | null>;
+  workspaceDirectory(conversationId: string, relativePath?: string): Promise<WorkspaceDirectory>;
+  workspaceFile(conversationId: string, relativePath: string): Promise<WorkspaceFile>;
+  runHistory(conversationId: string): Promise<RunRecord[]>;
+  browserState(): Promise<BrowserState>;
+  browserNavigate(url: string): Promise<void>;
+  browserCommand(command: 'back' | 'forward' | 'reload' | 'stop'): Promise<void>;
+  browserBounds(bounds: BrowserBounds): Promise<void>;
 }
 
 export type ApiMethod = keyof Api;
@@ -212,9 +232,26 @@ export const API_METHODS = [
   'startRun',
   'cancelRun',
   'usage',
+  'accountQuotas',
   'pickFolder',
+  'workspaceDirectory', 'workspaceFile', 'runHistory', 'browserState', 'browserNavigate', 'browserCommand', 'browserBounds',
 ] as const satisfies readonly ApiMethod[];
 
 // Fails to compile if a method was added to `Api` but not to API_METHODS.
 type Missing = Exclude<ApiMethod, (typeof API_METHODS)[number]>;
 export const _allMethodsListed: Missing extends never ? true : never = true;
+
+export interface WorkspaceEntry { name: string; path: string; kind: 'directory' | 'file' | 'link' }
+export interface WorkspaceDirectory { path: string; entries: WorkspaceEntry[]; truncated: boolean }
+export interface WorkspaceFile { path: string; text: string; bytes: number; truncated: boolean; binary: boolean }
+export interface BrowserBounds { visible: boolean; x: number; y: number; width: number; height: number }
+export interface BrowserState { supported: boolean; url: string; title: string; loading: boolean; canBack: boolean; canForward: boolean; error?: string }
+export interface WorkEntry {
+  id: number; at: string; kind: 'start' | 'phase' | 'tool' | 'consult' | 'step' | 'finish' | 'notice';
+  provider?: ProviderId; peer?: ProviderId; status: 'running' | 'done' | 'error' | 'cancelled' | 'skipped';
+  label: string; detail?: string; tool?: string; stepIndex?: number;
+}
+export interface RunRecord {
+  id: string; conversationId: string; prompt: string; startedAt: string; endedAt?: string;
+  status: 'running' | 'ok' | 'error' | 'cancelled'; entries: WorkEntry[]; inputTokens: number; outputTokens: number;
+}

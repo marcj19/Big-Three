@@ -69,13 +69,13 @@ export abstract class CliAdapter implements Adapter {
   /** Returns a fresh stateful parser for one run. */
   protected abstract createParser(): Parser;
 
-  private command(): Promise<ResolvedCommand> {
+  protected command(): Promise<ResolvedCommand> {
     return this.opts.command
       ? Promise.resolve(this.opts.command)
       : resolveCommand(this.binaryName, { explicitPath: this.opts.executablePath, extraDirs: this.extraSearchDirs });
   }
 
-  private env(): NodeJS.ProcessEnv {
+  protected env(): NodeJS.ProcessEnv {
     return sanitizeEnv(process.env, { passthrough: this.opts.passthroughEnv });
   }
 

@@ -48,7 +48,15 @@ export class ConversationStore {
     await mkdir(this.dir, { recursive: true });
     const tmp = `${this.indexFile}.${process.pid}.tmp`;
     await writeFile(tmp, JSON.stringify(list, null, 2));
-    await rename(tmp, this.indexFile);
+    // Windows can briefly hold the destination open during a concurrent read or virus scan.
+    // Keep the previous index intact and retry the atomic replacement, rather than truncating it.
+    for (let attempt = 0; ; attempt++) {
+      try { await rename(tmp, this.indexFile); break; }
+      catch (err) {
+        if (process.platform !== 'win32' || attempt >= 5 || !['EPERM', 'EACCES', 'EBUSY'].includes((err as NodeJS.ErrnoException).code ?? '')) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 30 * (attempt + 1)));
+      }
+    }
   }
 
   private checkId(id: string): void {

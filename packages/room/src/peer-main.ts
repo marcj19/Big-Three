@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { Team } from './peer-launch.js';
 import { createPeerServer } from './peer-server.js';
 import { FileTranscript } from './transcript.js';
+import { fileActivitySink } from './peer-activity.js';
 
 const PROVIDERS: readonly string[] = ['claude', 'gemini', 'codex'];
 const isProvider = (v: string | undefined): v is ProviderId => v !== undefined && PROVIDERS.includes(v);
@@ -37,6 +38,7 @@ async function main() {
   const team = parseTeam(process.env.AIO_ROOM_TEAM);
   const server = createPeerServer({
     team,
+    onActivity: process.env.AIO_ROOM_ACTIVITY_FILE ? fileActivitySink(process.env.AIO_ROOM_ACTIVITY_FILE) : undefined,
     self,
     peers,
     adapters: createAdapters(),

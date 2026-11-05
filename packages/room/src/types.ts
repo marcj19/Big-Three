@@ -41,7 +41,8 @@ export type RoomEvent =
   | { type: 'turn_start'; provider: ProviderId; instruction: string }
   | { type: 'text'; provider: ProviderId; text: string; partial: boolean }
   | { type: 'tool_call'; provider: ProviderId; name: string }
-  | { type: 'limit'; provider: ProviderId; status: string; window?: string; resetsAt?: number }
+  | { type: 'tool_result'; provider: ProviderId; name?: string; isError: boolean }
+  | { type: 'limit'; provider: ProviderId; status: string; window?: string; resetsAt?: number; usedPercent?: number }
   | { type: 'turn_end'; result: TurnResult }
   | { type: 'skipped'; provider: ProviderId; reason: string };
 

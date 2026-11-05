@@ -1,5 +1,6 @@
 import { appendFile } from 'node:fs/promises';
 import type { Adapter, AgentEvent, ProviderId, RunRequest } from '@aio/core';
+import { fileActivitySink, type PeerActivity } from '@aio/room';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -43,16 +44,38 @@ export function demoAdapters(): Record<ProviderId, Adapter> {
       // Pretend to consult a colleague, the way the real room server records it, when the user asks for one.
       const room = req.mcpServers?.find((s) => s.name === 'room');
       const peers = room?.env?.AIO_ROOM_PEERS?.split(',').filter(Boolean) ?? [];
+      const activitySink = room?.env?.AIO_ROOM_ACTIVITY_FILE ? fileActivitySink(room.env.AIO_ROOM_ACTIVITY_FILE) : undefined;
+      const peerActivity = (activity: PeerActivity['activity']) => {
+        if (peers[0]) activitySink?.({ self: id, peer: peers[0] as ProviderId, activity });
+      };
+      if (/escrit[oó]rio|anima[çc]|demonstra[çc]/i.test(req.prompt)) {
+        for (const name of ['read_file', 'apply_patch', 'exec_command']) {
+          if (req.signal?.aborted) { yield { type: 'done', status: 'cancelled' }; return; }
+          yield { type: 'tool_call', name }; await sleep(1800);
+        }
+      }
       if (room?.env?.AIO_ROOM_FILE && peers[0] && /colega|gemini|codex|revis/i.test(req.prompt.split('YOUR TURN')[0]?.split('\n').slice(-6).join(' ') ?? '')) {
         yield { type: 'tool_call', name: 'mcp__room__ask_peer' };
         await sleep(400);
         const line = (author: string, text: string) => JSON.stringify({ author, text, at: new Date().toISOString() }) + '\n';
         await appendFile(room.env.AIO_ROOM_FILE, line(id, `(to ${peers[0]}) Pode revisar criticamente esta resposta?`));
-        await sleep(600);
+        peerActivity('thinking');
+        await sleep(1800);
+        peerActivity('writing');
+        await sleep(1200);
         await appendFile(room.env.AIO_ROOM_FILE, line(peers[0], 'Revisão simulada: a resposta está correta, só falta citar um exemplo.'));
+        peerActivity('done');
       }
       const review = req.prompt.includes('VERDICT');
-      const text =
+      const formatted = /tabela|harness|formata[çc]/i.test(req.prompt);
+      const text = formatted ? [
+        '### Trabalho da equipe', '', '**A tarefa foi organizada em etapas para facilitar a revisão.**', '',
+        '| Etapa | Responsável | Resultado |', '|---|---|---|', '| Entender o projeto | Claude | Estrutura analisada |', '| Revisar a proposta | Gemini | Sugestões incorporadas |', '| Conferir a entrega | Equipe | Pronto para revisão |', '',
+        '#### Próximos passos', '', '1. Conferir os arquivos alterados.', '   - Ler o código e os comentários.', '   - Verificar as dependências.', '2. Validar a prévia no navegador integrado.', '',
+        '- [x] Estrutura organizada', '- [x] Revisão do colega recebida', '- [ ] Sua revisão final', '',
+        '```ts', 'const equipe = ["claude", "gemini", "codex"];', 'for (const ia of equipe) {', '  console.log(`Olá, ${ia}`);', '}', '```', '',
+        '[Abrir uma página de exemplo](https://example.com/)', '', '> Esta resposta usa modelos de demonstração e não consome cota.',
+      ].join('\n') :
         `[${displayName}, simulado${req.model ? ` · ${req.model}` : ''}${req.effort ? ` · esforço ${req.effort}` : ''}] Recebi: "${req.prompt.split('YOUR TURN')[1]?.trim().slice(0, 70) ?? ''}"\n\n` +
         'Exemplo de código:\n```ts\nconst x = 1;\n```\n' +
         (review ? '\nVERDICT: APPROVE' : '');

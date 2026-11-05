@@ -1,14 +1,23 @@
 import path from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { configDir } from '@aio/db-broker';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, session, type IpcMainInvokeEvent } from 'electron';
 import { AppService } from '../services/app-service.js';
 import { API_METHODS, type AppEvent } from '../shared/api.js';
+import { EmbeddedBrowser } from './browser.js';
+import { demoAdapters } from '../dev/demo-adapters.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const pageUrl = pathToFileURL(path.join(here, '..', 'renderer', 'index.html')).href;
+if (process.env.AIO_DEMO === '1') {
+  const demoData = path.join(configDir(), 'electron-demo');
+  mkdirSync(demoData, { recursive: true });
+  app.setPath('userData', demoData);
+}
 
 let win: BrowserWindow | null = null;
+const browser = new EmbeddedBrowser((state) => win?.webContents.send('aio:event', { type: 'browser', state } satisfies AppEvent));
 
 const confirmAccess = async ({ access, cwd, summary }: { access: 'edit' | 'full'; cwd: string; summary: string }) => {
   const full = access === 'full';
@@ -26,6 +35,8 @@ const confirmAccess = async ({ access, cwd, summary }: { access: 'edit' | 'full'
 
 const service = new AppService({
   configDir: configDir(),
+  browser,
+  adapters: process.env.AIO_DEMO === '1' ? demoAdapters() : undefined,
   confirmAccess,
   emit: (event: AppEvent) => win?.webContents.send('aio:event', event),
   pickFolder: async () => {
@@ -36,7 +47,7 @@ const service = new AppService({
 
 /** Only our own page may call the API; anything else loaded into the window (it should never be) is ignored. */
 function fromOurPage(event: IpcMainInvokeEvent): boolean {
-  return event.senderFrame?.url === pageUrl || event.senderFrame?.url.startsWith(`${pageUrl}#`) === true;
+  return event.sender === win?.webContents && (event.senderFrame?.url === pageUrl || event.senderFrame?.url.startsWith(`${pageUrl}#`) === true);
 }
 
 for (const method of API_METHODS) {
@@ -52,7 +63,7 @@ function createWindow(): void {
     height: 820,
     minWidth: 900,
     minHeight: 600,
-    title: 'Big Three',
+    title: process.env.AIO_DEMO === '1' ? 'Big Three · Demonstração' : 'Big Three',
     // Matches the page's own background so there is no white flash while it loads.
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0f1218' : '#f4f6fb',
     webPreferences: {
@@ -64,6 +75,8 @@ function createWindow(): void {
     },
   });
   win.removeMenu();
+  if (process.env.AIO_DEMO === '1') win.once('ready-to-show', () => { win?.show(); win?.restore(); win?.focus(); });
+  browser.attach(win);
   // The page never needs to open windows or leave itself.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e, url) => {
@@ -75,7 +88,7 @@ function createWindow(): void {
   void win.loadURL(pageUrl);
 }
 
-if (!app.requestSingleInstanceLock()) {
+if (process.env.AIO_DEMO !== '1' && !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {

@@ -19,6 +19,7 @@ export interface ProviderUsage {
   limitedUntil?: number;
   /** The last limit window the CLI reported (Claude announces its five-hour window on every run). */
   window?: { status: string; name?: string; resetsAt?: number };
+  windows?: { status: string; name?: string; resetsAt?: number; usedPercent?: number; observedAt: number }[];
 }
 
 const COOLDOWN_MS = 15 * 60_000;
@@ -45,7 +46,7 @@ export class UsageTracker {
     e.outputTokens += result.usage.outputTokens;
     e.costUsd += result.usage.costUsd;
     if (result.status === 'error') e.failures++;
-    if (result.rateLimited) e.limitedUntil = this.now() + this.cooldownMs;
+    if (result.rateLimited) e.limitedUntil = Math.max(e.limitedUntil ?? 0, this.now() + this.cooldownMs);
     else if (result.status === 'ok') delete e.limitedUntil;
   }
 
@@ -53,9 +54,11 @@ export class UsageTracker {
    * Remembers what a CLI said about its limit window. Only `allowed` has been seen live; a `rejected` status
    * (the Claude Agent SDK's name for being out of quota) pauses the provider until the reported reset.
    */
-  noteWindow(provider: ProviderId, window: { status: string; name?: string; resetsAt?: number }): void {
+  noteWindow(provider: ProviderId, window: { status: string; name?: string; resetsAt?: number; usedPercent?: number }): void {
     const e = this.entry(provider);
     e.window = window;
+    const previous = e.windows ?? [];
+    e.windows = [...previous.filter((entry) => entry.name !== window.name), { ...window, observedAt: this.now() }].slice(-20);
     if (window.status === 'rejected' && window.resetsAt !== undefined) e.limitedUntil = window.resetsAt;
   }
 

@@ -1,5 +1,6 @@
 import type { AgentEvent, Access, AuthStatus, ModelOption, RunRequest } from '../types.js';
 import { CliAdapter, DEFAULT_MODEL, isRecord, num, str, type BuiltInvocation, type Parser } from './base.js';
+import { readCodexQuota } from '../codex-quota.js';
 
 const SANDBOX: Record<Access, string> = {
   'read-only': 'read-only',
@@ -20,6 +21,7 @@ const tomlTable = (env: Record<string, string>) =>
  * Codex is not installed on this machine yet, so it has not been exercised against the real CLI.
  */
 export class CodexAdapter extends CliAdapter {
+  async readQuota() { return readCodexQuota(await this.command(), this.env()); }
   readonly id = 'codex' as const;
   readonly displayName = 'Codex';
   readonly supportsResume = true;
@@ -70,6 +72,7 @@ export class CodexAdapter extends CliAdapter {
 
   protected createParser(): Parser {
     let lastMessage = '';
+    const startedItems = new Set<string>();
     return (raw) => {
       if (!isRecord(raw)) return [];
       const events: AgentEvent[] = [];
@@ -82,6 +85,10 @@ export class CodexAdapter extends CliAdapter {
         case 'item.started': {
           const item = isRecord(raw.item) ? raw.item : {};
           if (str(item.type) === 'command_execution') events.push({ type: 'tool_call', name: 'shell', input: item.command });
+          else if (str(item.type) === 'file_change' || str(item.type) === 'web_search') {
+            if (str(item.id)) startedItems.add(str(item.id)!);
+            events.push({ type: 'tool_call', name: str(item.type) === 'file_change' ? 'apply_patch' : 'web_search' });
+          }
           else if (str(item.type) === 'mcp_tool_call') events.push({ type: 'tool_call', name: `${str(item.server) ?? 'mcp'}.${str(item.tool) ?? 'tool'}`, input: item.arguments });
           break;
         }
@@ -93,6 +100,13 @@ export class CodexAdapter extends CliAdapter {
             events.push({ type: 'text', text: lastMessage });
           } else if (kind === 'command_execution') {
             events.push({ type: 'tool_result', name: 'shell', isError: typeof item.exit_code === 'number' && item.exit_code !== 0 });
+          } else if (kind === 'file_change') {
+            // Some CLI versions only announce file changes once the patch has finished.
+            if (!startedItems.delete(str(item.id) ?? '')) events.push({ type: 'tool_call', name: 'apply_patch' });
+            events.push({ type: 'tool_result', name: 'apply_patch', isError: str(item.status) === 'failed' });
+          } else if (kind === 'web_search') {
+            if (!startedItems.delete(str(item.id) ?? '')) events.push({ type: 'tool_call', name: 'web_search' });
+            events.push({ type: 'tool_result', name: 'web_search' });
           } else if (kind === 'mcp_tool_call') {
             events.push({ type: 'tool_result', name: `${str(item.server) ?? 'mcp'}.${str(item.tool) ?? 'tool'}`, isError: str(item.status) === 'failed' });
           }

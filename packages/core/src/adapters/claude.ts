@@ -103,7 +103,9 @@ export class ClaudeAdapter extends CliAdapter {
         const info = isRecord(raw.rate_limit_info) ? raw.rate_limit_info : {};
         const status = str(info.status);
         const resetsAt = num(info.resetsAt);
-        if (status) events.push({ type: 'limit', status, window: str(info.rateLimitType), resetsAt: resetsAt === undefined ? undefined : resetsAt * 1000 });
+        const utilization = num(info.utilization);
+        if (status) events.push({ type: 'limit', status, window: str(info.rateLimitType), resetsAt: resetsAt === undefined ? undefined : resetsAt * 1000,
+          ...(utilization !== undefined && utilization >= 0 && utilization <= 1 ? { usedPercent: utilization * 100 } : {}) });
       } else if (type === 'result') {
         const usage = isRecord(raw.usage) ? raw.usage : {};
         events.push({

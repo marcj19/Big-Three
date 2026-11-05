@@ -5,6 +5,7 @@ import { ctx } from './ctx.js';
 import { clear, h } from './dom.js';
 import { engineMark, icon, providerMark } from './icons.js';
 import { segmented } from './seg.js';
+import { renderOffice } from './office.js';
 import { ACCESS_META, canLead, modelLabel, NAMES, PROVIDERS, provider, ready, saveConfig, state, teamMembers, usable, type Pick } from './state.js';
 
 const CUSTOM = '__custom__';
@@ -389,6 +390,7 @@ function renderWarnings(): void {
 }
 
 export function renderComposer(): void {
+  renderOffice();
   const open = pop ? popOwner?.dataset.fk : undefined;
   if (pop) {
     // keep the open popover's DOM across the re-render of the chips

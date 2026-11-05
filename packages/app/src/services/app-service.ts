@@ -17,10 +17,15 @@ import type {
   ProviderStatus,
   StartRun,
   UsageView,
+  AccountQuota,
 } from '../shared/api.js';
 import { ConnectionService } from './connections.js';
 import { ConversationStore } from './conversations.js';
 import { RunManager } from './runs.js';
+import { RunJournal } from './run-journal.js';
+import { workspaceDirectory, workspaceFile } from './workspace.js';
+import { browserUrl } from '../shared/browser-url.js';
+import type { BrowserBounds, BrowserState } from '../shared/api.js';
 
 export interface AccessRequest {
   access: Exclude<Access, 'read-only'>;
@@ -41,6 +46,7 @@ export interface AppServiceOptions {
   brokerEntry?: string;
   peerEntry?: string;
   timeoutMs?: number;
+  browser?: { state(): BrowserState; navigate(url: string): Promise<void>; command(command: 'back' | 'forward' | 'reload' | 'stop'): void; bounds(bounds: BrowserBounds): void };
 }
 
 const providerId = z.enum(['claude', 'gemini', 'codex']);
@@ -106,13 +112,17 @@ export class AppService implements Api {
   private readonly store: ConversationStore;
   private readonly connections: ConnectionService;
   private readonly runs: RunManager;
+  private readonly journal: RunJournal;
   private readonly logins = new Map<ProviderId, AbortController>();
+  private quotaRead?: Promise<AccountQuota[]>;
+  private quotaCache?: { at: number; value: AccountQuota[] };
 
   constructor(private readonly options: AppServiceOptions) {
     this.adapters = options.adapters ?? createAdapters();
     const vault = options.vault ?? new KeyringSecretStore();
     this.store = new ConversationStore(path.join(options.configDir, 'conversations'));
     this.connections = new ConnectionService(options.configDir, vault);
+    this.journal = new RunJournal(path.join(options.configDir, 'runs'));
     this.runs = new RunManager({
       adapters: this.adapters,
       store: this.store,
@@ -121,11 +131,35 @@ export class AppService implements Api {
       databaseTools: (names) => this.databaseTools(names),
       peerEntry: options.peerEntry,
       timeoutMs: options.timeoutMs,
+      journal: this.journal,
     });
   }
 
   private emit(event: AppEvent): void {
     this.options.emit?.(event);
+  }
+
+  async workspaceDirectory(conversationId: string, relativePath = '') {
+    const meta = await this.store.get(z.string().parse(conversationId));
+    return workspaceDirectory(meta.cwd, z.string().max(4096).parse(relativePath));
+  }
+  async workspaceFile(conversationId: string, relativePath: string) {
+    const meta = await this.store.get(z.string().parse(conversationId));
+    return workspaceFile(meta.cwd, z.string().min(1).max(4096).parse(relativePath));
+  }
+  async runHistory(conversationId: string) { await this.store.get(z.string().parse(conversationId)); return this.journal.list(conversationId); }
+  async browserState(): Promise<BrowserState> { return this.options.browser?.state() ?? { supported: false, url: '', title: '', loading: false, canBack: false, canForward: false }; }
+  async browserNavigate(url: string): Promise<void> {
+    const address = browserUrl(z.string().max(4000).parse(url));
+    if (!this.options.browser) throw new Error('O navegador integrado está disponível no app desktop.');
+    await this.options.browser.navigate(address);
+  }
+  async browserCommand(command: 'back' | 'forward' | 'reload' | 'stop'): Promise<void> {
+    this.options.browser?.command(z.enum(['back', 'forward', 'reload', 'stop']).parse(command));
+  }
+  async browserBounds(bounds: BrowserBounds): Promise<void> {
+    const rect = z.object({ visible: z.boolean(), x: z.number().finite().min(0).max(30000), y: z.number().finite().min(0).max(30000), width: z.number().finite().min(0).max(30000), height: z.number().finite().min(0).max(30000) }).parse(bounds);
+    this.options.browser?.bounds(rect);
   }
 
   private databaseTools(connections: string[]) {
@@ -221,6 +255,7 @@ export class AppService implements Api {
   async deleteConversation(id: string): Promise<void> {
     if (this.runs.isBusy(id)) throw new Error('Cancel the running task first');
     await this.store.remove(id);
+    await this.journal.removeConversation(id);
   }
 
   async startRun(raw: StartRun): Promise<{ runId: string }> {
@@ -264,12 +299,41 @@ export class AppService implements Api {
     return Object.fromEntries(
       Object.entries(this.usageTracker.snapshot()).map(([k, v]) => [
         k,
-        { turns: v.turns, failures: v.failures, inputTokens: v.inputTokens, outputTokens: v.outputTokens, limitedUntil: v.limitedUntil, window: v.window },
+        { turns: v.turns, failures: v.failures, inputTokens: v.inputTokens, outputTokens: v.outputTokens, limitedUntil: v.limitedUntil, window: v.window, windows: v.windows },
       ]),
     );
   }
 
   async pickFolder(): Promise<string | null> {
     return (await this.options.pickFolder?.()) ?? null;
+  }
+
+  async accountQuotas(): Promise<AccountQuota[]> {
+    // Coalesce refreshes and avoid polling an account endpoint on each UI update.
+    if (this.quotaCache && Date.now() - this.quotaCache.at < 60000) return this.withObservedQuota(this.quotaCache.value);
+    this.quotaRead ??= Promise.all((['claude', 'gemini', 'codex'] as const).map(async (provider): Promise<AccountQuota> => {
+      const adapter = this.adapters[provider];
+      if (adapter?.readQuota) {
+        try {
+          const windows = await adapter.readQuota();
+          return { provider, source: windows.length ? 'account' : 'unavailable', checkedAt: Date.now(), windows,
+            message: windows.length ? 'Cota informada pela conta conectada.' : 'A conta não forneceu janelas de cota.' };
+        } catch { return { provider, source: 'unavailable', checkedAt: Date.now(), windows: [], message: 'Não foi possível consultar a cota. Confira o login e a versão da CLI.' }; }
+      }
+      return { provider, source: 'unavailable', windows: [], message: provider === 'claude'
+        ? 'Os limites reportados pela CLI aparecem após uma execução. Confira a cota completa na plataforma.'
+        : provider === 'gemini' ? 'Consulte a cota por modelo com /usage no Antigravity.' : 'Consulta de cota indisponível nesta CLI.' };
+    })).then((value) => { this.quotaCache = { at: Date.now(), value }; return value; }).finally(() => { this.quotaRead = undefined; });
+    return this.withObservedQuota(await this.quotaRead);
+  }
+  private withObservedQuota(quotas: AccountQuota[]): AccountQuota[] {
+    const usage = this.usageTracker.snapshot();
+    return quotas.map((quota) => {
+      const windows = usage[quota.provider]?.windows;
+      return quota.source === 'account' || !windows?.length ? quota : { ...quota, source: 'events',
+        checkedAt: Math.max(...windows.map((window) => window.observedAt)),
+        message: 'Últimos limites informados pela CLI durante execuções neste app.',
+        windows: windows.map((window) => ({ ...window, name: window.name ?? 'Janela informada' })) };
+    });
   }
 }

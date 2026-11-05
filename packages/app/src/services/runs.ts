@@ -3,6 +3,8 @@ import type { Adapter, McpServerSpec, ProviderId } from '@aio/core';
 import { crossReview, debate, planExecute, Room, runFlow, type FlowStep, type PatternResult, type RoomEvent, type Team, type UsageTracker } from '@aio/room';
 import type { AppEvent, RoomEventView, RunOutcome, StartRun } from '../shared/api.js';
 import type { ConversationStore } from './conversations.js';
+import { watchPeerActivity } from './peer-activity.js';
+import type { RunJournal } from './run-journal.js';
 
 export interface RunDeps {
   adapters: Partial<Record<ProviderId, Adapter>>;
@@ -14,6 +16,7 @@ export interface RunDeps {
   /** Where the room's ask_peer server starts from; defaults to the one shipped with @aio/room. */
   peerEntry?: string;
   timeoutMs?: number;
+  journal?: RunJournal;
 }
 
 /** The teammates the lead may consult and the model each one answers with. */
@@ -41,6 +44,7 @@ export class RunManager {
   start(input: StartRun, cwd: string): string {
     if (this.isBusy(input.conversationId)) throw new Error('This conversation is already running. Wait for it or cancel it.');
     const runId = randomUUID();
+    this.deps.journal?.begin(runId, input);
     const abort = new AbortController();
     this.active.set(runId, { conversationId: input.conversationId, abort });
     void this.execute(runId, input, cwd, abort).finally(() => this.active.delete(runId));
@@ -49,6 +53,11 @@ export class RunManager {
 
   cancel(runId: string): void {
     this.active.get(runId)?.abort.abort();
+  }
+
+  private publish(event: AppEvent): void {
+    if ('runId' in event) this.deps.journal?.event(event.runId, event);
+    this.deps.emit(event);
   }
 
   /**
@@ -92,14 +101,21 @@ export class RunManager {
     const { deps } = this;
     const conversationId = input.conversationId;
     let outcome: RunOutcome;
+    let activity: Awaited<ReturnType<typeof watchPeerActivity>> | undefined;
     try {
+      if (input.peerTools) {
+        activity = await watchPeerActivity((event) => {
+          const allowed = input.spec.kind !== 'lead' || input.spec.team.some((member) => member.provider === event.peer);
+          if (allowed) this.publish({ type: 'peer_activity', runId, conversationId, ...event });
+        }).catch(() => undefined);
+      }
       const room = new Room({
         adapters: deps.adapters,
         cwd,
         transcript: deps.store.transcript(conversationId),
         usage: deps.usage,
-        onEvent: (event) => deps.emit({ type: 'room', runId, conversationId, event: toView(event) }),
-        peerServer: input.peerTools ? { entry: deps.peerEntry, team: input.spec.kind === 'lead' ? teamOf(input.spec.team, input.spec.lead.provider) : undefined } : undefined,
+        onEvent: (event) => this.publish({ type: 'room', runId, conversationId, event: toView(event) }),
+        peerServer: input.peerTools ? { entry: deps.peerEntry, activityFile: activity?.file, team: input.spec.kind === 'lead' ? teamOf(input.spec.team, input.spec.lead.provider) : undefined } : undefined,
       });
       const db = input.connections.length ? deps.databaseTools(input.connections) : undefined;
       const common = { cwd, signal: abort.signal, timeoutMs: deps.timeoutMs, withPeerTools: input.peerTools, mcpServers: db ? [db] : undefined };
@@ -129,7 +145,7 @@ export class RunManager {
             task: input.prompt,
             steps,
             ...common,
-            onStep: (step) => deps.emit({ type: 'step', runId, conversationId, step }),
+            onStep: (step) => this.publish({ type: 'step', runId, conversationId, step }),
           }),
         );
       } else {
@@ -139,6 +155,10 @@ export class RunManager {
     } catch (err) {
       outcome = { status: 'error', final: '', error: err instanceof Error ? err.message : String(err) };
     }
-    deps.emit({ type: 'run_done', runId, conversationId, outcome });
+    await activity?.close();
+    const finished: AppEvent = { type: 'run_done', runId, conversationId, outcome };
+    deps.journal?.event(runId, finished);
+    await deps.journal?.save(runId).catch(() => {});
+    deps.emit(finished);
   }
 }

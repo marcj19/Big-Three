@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseInline, parseMarkdown } from '../src/renderer/markdown.js';
+import { normalizeChatMarkdown, parseInline, parseMarkdown, safeLink } from '../src/renderer/markdown.js';
 import { titleFrom } from '../src/services/conversations.js';
 
 const kinds = (text: string) => parseMarkdown(text).map((b) => b.kind);
@@ -44,13 +44,13 @@ describe('Markdown blocks', () => {
     expect(blocks[1]).toMatchObject({ kind: 'paragraph', inline: [{ kind: 'text', value: 'Intro line\nsecond line' }] });
     expect(blocks[2]).toMatchObject({ kind: 'list', ordered: false });
     expect(blocks[3]).toMatchObject({ kind: 'list', ordered: true });
-    expect(blocks[5]).toEqual({ kind: 'code', value: 'const x = 1;' });
+    expect(blocks[5]).toEqual({ kind: 'code', value: 'const x = 1;', language: 'ts' });
   });
 
   it('shows a code block that is still streaming (no closing fence yet)', () => {
     expect(parseMarkdown('Here:\n```js\nconst a = 1;\nconst b')).toEqual([
       { kind: 'paragraph', inline: [{ kind: 'text', value: 'Here:' }] },
-      { kind: 'code', value: 'const a = 1;\nconst b' },
+      { kind: 'code', value: 'const a = 1;\nconst b', language: 'js' },
     ]);
   });
 
@@ -67,7 +67,32 @@ describe('Markdown blocks', () => {
   });
 
   it('a heading or list directly after text starts a new block', () => {
-    expect(kinds('Intro\n- a\n- b\nOutro')).toEqual(['paragraph', 'list', 'paragraph']);
+    expect(kinds('Intro\n- a\n- b\n\nOutro')).toEqual(['paragraph', 'list', 'paragraph']);
+  });
+
+  it('renders the pasted escaped table and wrapped source links as structured content', () => {
+    const text = ['\\| Necessidade | Sugestão |', '\\|---|---|', '\\| Raiz oleosa | **Exemplo** |', '',
+      '[Fonte]\\([https://example.com/produto](https://example.com/produto))'].join('\n');
+    const blocks = parseMarkdown(text);
+    expect(blocks[0]).toMatchObject({ kind: 'table', rows: [[[{ kind: 'text', value: 'Raiz oleosa' }], [{ kind: 'bold', value: 'Exemplo' }]]] });
+    expect(blocks[1]).toMatchObject({ kind: 'paragraph', inline: [{ kind: 'link', value: 'Fonte', href: 'https://example.com/produto' }] });
+  });
+  it('preserves nested lists, tasks, strikethrough and ordered numbering', () => {
+    const blocks = parseMarkdown('3. Etapa\n   - [x] Conferido\n   - [ ] ~~Antigo~~\n\n> **Nota**\n>\n> Texto');
+    expect(blocks[0]).toMatchObject({ kind: 'list', ordered: true, start: 3, items: [{ blocks: [
+      { kind: 'paragraph' }, { kind: 'list', items: [{ checked: true }, { checked: false }] },
+    ] }] });
+    expect(blocks[1]).toMatchObject({ kind: 'quote', blocks: [{ kind: 'paragraph' }, { kind: 'paragraph' }] });
+    expect(parseMarkdown('- [x] Conferido')[0]).toMatchObject({
+      kind: 'list', items: [{ checked: true, blocks: [{ kind: 'paragraph', inline: [{ kind: 'text', value: 'Conferido' }] }] }],
+    });
+  });
+  it('does not repair literal code or promote unsafe links and HTML into executable content', () => {
+    const code = '```md\n\\| A | B |\n\\|---|---|\n```';
+    expect(normalizeChatMarkdown(code)).toBe(code);
+    for (const url of ['javascript:alert(1)', 'data:text/html,test', 'file:///C:/secret', 'https://user:pass@example.com']) expect(safeLink(url)).toBeUndefined();
+    expect(parseInline('[site](https://example.com)')[0]).toMatchObject({ kind: 'link', href: 'https://example.com/' });
+    expect(parseMarkdown('<script>alert(1)</script>')[0]).toMatchObject({ kind: 'paragraph', inline: [{ kind: 'text', value: '<script>alert(1)</script>' }] });
   });
 });
 

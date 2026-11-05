@@ -87,6 +87,65 @@ está desconectado.
 4. Peça ajuda com palavras simples quando quiser: *"peça ao Gemini para revisar isto"*, *"peça uma segunda opinião ao Codex
    antes de mudar qualquer coisa"*.
 
+### Área de trabalho e histórico de execuções
+
+Na lateral, clique em **Modelos** para recolher ou expandir a lista de conexões. A preferência é salva neste computador;
+o botão **Limites e uso** continua acessível quando a lista está recolhida.
+
+**Limites e uso** separa os tokens e turnos desta sessão do app da cota da assinatura. Para Codex conectado com ChatGPT,
+consulta as janelas de cota pelo App Server oficial, sem criar uma conversa ou executar um modelo. A leitura tem cache
+de até um minuto. Para Claude, mostra as janelas e percentuais que a CLI informar durante as execuções; valores ausentes
+não são estimados. Dados com renovação vencida ficam identificados como aguardando atualização. Há atalhos para os
+painéis oficiais do Claude e do Codex e instruções de `/usage` no Antigravity (`agy`). Não há leitura automática da cota
+do Antigravity. A contagem local não inclui uso feito fora deste app e é zerada ao reiniciar.
+
+Abra **Atividade**, **Arquivos** ou **Navegador** na barra superior para trabalhar ao lado do chat.
+
+- **Atividade** mostra as etapas observadas, ferramentas, consultas entre IAs, tokens reportados, tempo decorrido e um
+  botão para parar a execução. Os registros de execuções finalizadas ficam salvos localmente por conversa, inclusive
+  depois de reabrir o app.
+- **Arquivos** explora a pasta do projeto da conversa e mostra textos com números de linha. O painel é somente leitura;
+  **Inserir trecho no chat** adiciona um trecho limitado ao rascunho para você revisar antes de enviar. Caminhos fora do
+  projeto, inclusive links que apontem para fora dele, são recusados. A prévia tem limite de 256 KB e 2.500 linhas.
+- **Navegador** abre sites HTTP(S) e localhost dentro do Electron, com voltar, avançar e recarregar. Links das respostas
+  também abrem aqui. A página usa uma sessão separada, sem a ponte privilegiada do app. A navegação é controlada pelo
+  usuário; este painel não acrescenta ferramentas de navegação autônoma às IAs. Na prévia web de desenvolvimento, o link
+  abre em outra aba.
+
+As respostas aceitam tabelas, listas aninhadas, checklists, citações e blocos de código com linguagem e botão de copiar.
+As consultas continuam recolhíveis, com um resumo do trabalho que abre a linha do tempo. Os registros guardam um trecho
+curto do pedido e os metadados da atividade; não duplicam respostas dos modelos nem instruções privadas. Somente execuções
+finalizadas são persistidas; isso não recupera uma execução interrompida por uma falha do app.
+
+![Chat formatado e explorador de arquivos somente leitura, com modelos de demonstração](docs/screenshots/harness-files.jpg)
+
+![Navegador nativo dentro da área de trabalho](docs/screenshots/harness-browser.png)
+
+### Escritório 3D (opcional)
+
+Clique em **Escritório 3D** na barra superior, ou ative em **Aparência → Escritório 3D**. Claude, Gemini e Codex têm
+mascotes cartunescos em um escritório com mesas próprias, enquanto o chat continua disponível ao lado. Arraste para girar,
+role para aproximar e clique em um personagem ou no seu nome para selecioná-lo. **Escolher como líder** usa o mesmo seletor
+de IA do chat; não envia uma mensagem nem inicia uma execução.
+
+A preferência fica salva neste computador e começa desligada. O motor 3D só carrega quando ativado, pausa quando a página
+fica oculta e libera os recursos gráficos ao sair. **Reduzir animações**, inclusive a preferência do sistema, mantém a cena
+estática e os estados atualizados. Se o dispositivo não conseguir abrir o WebGL, o chat continua disponível. Os personagens
+usam geometria local; não precisam baixar modelos ou texturas.
+
+Os balões e gestos acompanham os eventos reais: leitura de arquivos, edição, terminal, pesquisa, banco de dados e resposta.
+As consultas via MCP também atualizam o colega consultado e o líder que aguarda. Quando uma ferramenta termina, o personagem
+volta a conferir o resultado. Ferramentas desconhecidas aparecem com um gesto genérico, sem inventar ações a partir do texto.
+
+Em **Loja & estilo**, experimente e equipe roupas, chapéus e acessórios em um provador 3D, ou mude as cores do escritório.
+Todos os itens desta coleção são gratuitos, e cada IA tem uma combinação independente. O guarda-roupa fica salvo neste
+computador; experimentar não substitui o item equipado até clicar em **Resgatar grátis e equipar** ou **Equipar**.
+O seletor **Ritmo das animações** oferece pausas maiores no modo Tranquilo, que é o padrão.
+
+![Escritório 3D com os modelos de demonstração](docs/screenshots/office-refined.jpg)
+
+![Loja de roupas com provador 3D](docs/screenshots/office-shop.jpg)
+
 ### Conectando um banco de dados
 
 Crie um usuário no banco que **só tenha `SELECT`** no que os modelos podem ver, abra **Bancos de dados** na barra lateral,

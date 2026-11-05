@@ -7,6 +7,7 @@ import { Room } from './room.js';
 import { renderTranscript } from './transcript.js';
 import type { TranscriptStore } from './types.js';
 import { UsageTracker } from './usage.js';
+import { peerActivityReporter, type PeerActivity } from './peer-activity.js';
 
 export interface PeerServerOptions {
   /** The model this server is handed to. */
@@ -22,6 +23,7 @@ export interface PeerServerOptions {
   /** Model and effort each teammate answers with (the lead cannot change them). */
   team?: Team;
   usage?: UsageTracker;
+  onActivity?: (event: PeerActivity) => void;
 }
 
 const MAX_POST_CHARS = 8_000;
@@ -35,7 +37,8 @@ const asError = (text: string) => ({ isError: true, content: [{ type: 'text' as 
  */
 export function createPeerServer(options: PeerServerOptions): McpServer {
   const { self, peers } = options;
-  const room = new Room({ adapters: options.adapters, cwd: options.cwd, transcript: options.transcript, usage: options.usage });
+  const room = new Room({ adapters: options.adapters, cwd: options.cwd, transcript: options.transcript, usage: options.usage,
+    onEvent: options.onActivity ? peerActivityReporter(self, options.onActivity) : undefined });
   let asks = 0;
 
   const server = new McpServer({ name: 'aio-room', version: '0.1.0' });

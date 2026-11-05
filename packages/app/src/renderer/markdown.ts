@@ -1,93 +1,88 @@
-/**
- * A small, safe subset of Markdown for model replies: paragraphs, headings, lists, quotes, fenced code, and inline
- * **bold**, *italic* and `code`. It only produces data (never HTML): the window builds elements from these pieces
- * and inserts every string as text, so nothing a model writes can become markup. Links are left as plain text.
- */
-export type Inline = { kind: 'text' | 'bold' | 'italic' | 'code'; value: string };
+import { Lexer, type Token, type Tokens } from 'marked';
+
+/** Tokens only; remote HTML is never handed to a browser parser. */
+export type Inline = { kind: 'text' | 'bold' | 'italic' | 'code' | 'strike' | 'link' | 'break'; value: string; href?: string; children?: Inline[] };
 export type Block =
   | { kind: 'paragraph'; inline: Inline[] }
   | { kind: 'heading'; level: 1 | 2 | 3; inline: Inline[] }
-  | { kind: 'list'; ordered: boolean; items: Inline[][] }
-  | { kind: 'quote'; inline: Inline[] }
-  | { kind: 'code'; value: string };
+  | { kind: 'list'; ordered: boolean; start: number; items: { blocks: Block[]; checked?: boolean }[] }
+  | { kind: 'quote'; blocks: Block[] }
+  | { kind: 'table'; header: Inline[][]; rows: Inline[][][]; align: (string | null)[] }
+  | { kind: 'rule' }
+  | { kind: 'code'; value: string; language?: string };
 
-/** Inline spans. Emphasis needs non-space text right inside the marks, so `17 * 3 * 2` stays arithmetic. */
-export function parseInline(text: string): Inline[] {
-  const out: Inline[] = [];
-  const push = (kind: Inline['kind'], value: string) => {
+export function safeLink(value: string): string | undefined {
+  try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : undefined; }
+  catch { return undefined; }
+}
+
+function inlineTokens(tokens: Token[]): Inline[] {
+  const result: Inline[] = [];
+  const text = (value: string) => {
     if (!value) return;
-    const last = out[out.length - 1];
-    if (kind === 'text' && last?.kind === 'text') last.value += value;
-    else out.push({ kind, value });
+    const previous = result.at(-1);
+    if (previous?.kind === 'text') previous.value += value;
+    else result.push({ kind: 'text', value });
   };
-  let i = 0;
-  while (i < text.length) {
-    const rest = text.slice(i);
-    let m: RegExpExecArray | null;
-    if ((m = /^`([^`\n]+)`/.exec(rest))) {
-      push('code', m[1]!);
-      i += m[0].length;
-    } else if ((m = /^\*\*(?=\S)([^\n]*?\S)\*\*/.exec(rest))) {
-      push('bold', m[1]!);
-      i += m[0].length;
-    } else if ((m = /^\*(?=[^\s*])([^\n*]*?[^\s*])\*(?![*\w])/.exec(rest)) && !/\w/.test(text[i - 1] ?? '')) {
-      push('italic', m[1]!);
-      i += m[0].length;
-    } else {
-      push('text', text[i]!);
-      i++;
+  for (const token of tokens) {
+    switch (token.type) {
+      case 'strong': case 'em': case 'del': {
+        const span = token as Tokens.Strong;
+        const children = inlineTokens(span.tokens);
+        result.push({ kind: token.type === 'strong' ? 'bold' : token.type === 'em' ? 'italic' : 'strike', value: span.text,
+          ...(children.some((child) => child.kind !== 'text') ? { children } : {}) }); break;
+      }
+      case 'codespan': result.push({ kind: 'code', value: token.text }); break;
+      case 'link': case 'image': {
+        const link = token as Tokens.Link;
+        const href = safeLink(link.href);
+        if (!href) text(token.raw);
+        else result.push({ kind: 'link', value: link.text || href, href, ...(link.tokens ? { children: inlineTokens(link.tokens) } : {}) });
+        break;
+      }
+      case 'br': result.push({ kind: 'break', value: '' }); break;
+      case 'escape': text(token.text); break;
+      case 'text': if (token.tokens) result.push(...inlineTokens(token.tokens)); else text(token.text); break;
+      default: text(token.raw);
     }
   }
-  return out;
+  return result;
+}
+export function parseInline(text: string): Inline[] {
+  if (/^[\d\s*+\-/=().,]+$/.test(text)) return [{ kind: 'text', value: text }];
+  return inlineTokens(Lexer.lexInline(text, { gfm: true }));
 }
 
-const BULLET = /^\s{0,3}[-*+]\s+(.*)$/;
-const NUMBERED = /^\s{0,3}\d+[.)]\s+(.*)$/;
-
-export function parseMarkdown(text: string): Block[] {
-  const lines = text.replace(/\r\n?/g, '\n').split('\n');
-  const blocks: Block[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i]!;
-    if (!line.trim()) {
-      i++;
-      continue;
+/** Repairs escaped table borders and wrapped links pasted from another chat, outside code fences. */
+export function normalizeChatMarkdown(text: string): string {
+  let fence: string | undefined;
+  return text.replace(/\r\n?/g, '\n').split('\n').map((line) => {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length && /^\s{0,3}(?:`+|~+)\s*$/.test(line)) fence = undefined; return line; }
+    if (fence || /^ {4}|^\t/.test(line)) return line;
+    return line.replace(/^(\s*)\\\|/, '$1|')
+      .replace(/\[([^\]\n]+)\]\\\(\[(https?:\/\/[^\s\]]+)\]\((https?:\/\/[^\s)]+)\)\)/g,
+        (all, label: string, shown: string, href: string) => shown === href ? `[${label}](${href})` : all);
+  }).join('\n');
+}
+function blocks(tokens: Token[], depth = 0): Block[] {
+  if (depth > 12) return [{ kind: 'paragraph', inline: [{ kind: 'text', value: tokens.map((t) => t.raw).join('') }] }];
+  const result: Block[] = [];
+  for (const token of tokens) {
+    switch (token.type) {
+      case 'space': case 'def': case 'checkbox': break;
+      case 'heading': result.push({ kind: 'heading', level: Math.min(token.depth, 3) as 1 | 2 | 3, inline: inlineTokens(token.tokens ?? []) }); break;
+      case 'code': result.push({ kind: 'code', value: token.text, ...(token.lang ? { language: token.lang.split(/\s/)[0] } : {}) }); break;
+      case 'blockquote': result.push({ kind: 'quote', blocks: blocks(token.tokens ?? [], depth + 1) }); break;
+      case 'list': result.push({ kind: 'list', ordered: token.ordered, start: Number(token.start) || 1,
+        items: token.items.map((item: Tokens.ListItem) => ({ blocks: blocks(item.tokens, depth + 1), ...(item.task ? { checked: item.checked === true } : {}) })) }); break;
+      case 'table': result.push({ kind: 'table', header: token.header.map((cell: Tokens.TableCell) => inlineTokens(cell.tokens)),
+        rows: token.rows.map((row: Tokens.TableCell[]) => row.map((cell) => inlineTokens(cell.tokens))), align: token.align }); break;
+      case 'hr': result.push({ kind: 'rule' }); break;
+      case 'paragraph': case 'text': result.push({ kind: 'paragraph', inline: token.tokens ? inlineTokens(token.tokens) : parseInline(token.text) }); break;
+      default: result.push({ kind: 'paragraph', inline: [{ kind: 'text', value: token.raw }] });
     }
-    if (/^\s*```/.test(line)) {
-      // An unterminated fence (the reply is still streaming) takes everything up to the end.
-      const body: string[] = [];
-      i++;
-      while (i < lines.length && !/^\s*```\s*$/.test(lines[i]!)) body.push(lines[i++]!);
-      i++;
-      blocks.push({ kind: 'code', value: body.join('\n') });
-      continue;
-    }
-    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (heading) {
-      blocks.push({ kind: 'heading', level: Math.min(heading[1]!.length, 3) as 1 | 2 | 3, inline: parseInline(heading[2]!.trim()) });
-      i++;
-      continue;
-    }
-    const kind = BULLET.test(line) ? 'bullet' : NUMBERED.test(line) ? 'numbered' : undefined;
-    if (kind) {
-      const pattern = kind === 'bullet' ? BULLET : NUMBERED;
-      const items: Inline[][] = [];
-      while (i < lines.length && pattern.test(lines[i]!)) items.push(parseInline(pattern.exec(lines[i++]!)![1]!));
-      blocks.push({ kind: 'list', ordered: kind === 'numbered', items });
-      continue;
-    }
-    if (/^\s{0,3}>\s?/.test(line)) {
-      const quoted: string[] = [];
-      while (i < lines.length && /^\s{0,3}>\s?/.test(lines[i]!)) quoted.push(lines[i++]!.replace(/^\s{0,3}>\s?/, ''));
-      blocks.push({ kind: 'quote', inline: parseInline(quoted.join('\n')) });
-      continue;
-    }
-    const para: string[] = [];
-    while (i < lines.length && lines[i]!.trim() && !/^\s*```/.test(lines[i]!) && !/^#{1,6}\s/.test(lines[i]!) && !BULLET.test(lines[i]!) && !NUMBERED.test(lines[i]!) && !/^\s{0,3}>/.test(lines[i]!)) {
-      para.push(lines[i++]!);
-    }
-    blocks.push({ kind: 'paragraph', inline: parseInline(para.join('\n')) });
   }
-  return blocks;
+  return result;
 }
+export function parseMarkdown(text: string): Block[] { return blocks(Lexer.lex(normalizeChatMarkdown(text), { gfm: true })); }

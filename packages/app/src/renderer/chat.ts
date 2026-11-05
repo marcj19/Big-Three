@@ -5,6 +5,10 @@ import { clear, formatTime, h, renderRichText, syncChildren } from './dom.js';
 import { icon, providerMark } from './icons.js';
 import { NAMES, PROVIDERS, ready, saveConfig, STARTERS, state, type LiveTurn } from './state.js';
 import { toast } from './ui.js';
+import { renderOffice } from './office.js';
+import { appearance, setAppearance } from './theme.js';
+import { harnessToolbar, conversationRuns, workCard, matchRun } from './harness.js';
+import { toolLabel } from '../shared/work-trace.js';
 
 export const topbarEl = h('header', { class: 'topbar' });
 export const messagesEl = h('div', { class: 'messages', role: 'log', 'aria-live': 'polite', 'aria-relevant': 'additions', 'aria-label': 'Mensagens da conversa', tabindex: '-1' });
@@ -25,8 +29,13 @@ export function renderTopbar(): void {
       icon('menu'),
     ),
   );
+  const modeButton = () => h('button', {
+    class: 'btn office-toggle', type: 'button', 'aria-pressed': String(appearance.office3d),
+    onClick: () => setAppearance({ office3d: !appearance.office3d }),
+  }, appearance.office3d ? 'Voltar ao chat' : 'Escritório 3D');
   if (!meta) {
     topbarEl.append(h('div', { class: 'titles' }, h('h1', {}, 'Big Three')));
+    topbarEl.append(harnessToolbar(), modeButton());
     return;
   }
   const subtitle = h('div', { class: 'subtitle', title: meta.cwd }, icon('folder', 'sm'), h('span', {}, meta.cwd));
@@ -57,6 +66,8 @@ export function renderTopbar(): void {
       ),
     );
   }
+
+  topbarEl.append(harnessToolbar(), modeButton());
 
   function stop() {
     editing = false;
@@ -114,6 +125,7 @@ function messageNode(m: MessageView): HTMLElement {
       // Your own messages carry no name, like in Messages; the time is in the tooltip and the accessible name.
       m.author === 'system' || m.author === 'user' ? '' : h('div', { class: 'who' }, name, h('span', { class: 'time' }, formatTime(m.at))),
       h('div', { class: 'text' }, renderRichText(m.text, copy)),
+      m.author !== 'user' && m.author !== 'system' ? h('div', { class: 'message-actions' }, h('button', { class: 'btn text', type: 'button', onClick: () => void copy(m.text) }, 'Copiar resposta')) : '',
     ),
   );
 }
@@ -139,10 +151,10 @@ function updateLive(el: HTMLElement, t: LiveTurn): void {
   } else if (!t.text && !text.firstChild) {
     text.append(h('span', { class: 'dots', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')));
   }
-  const names = t.tools.slice(-6);
+  const names = t.tools.slice(-1);
   if (tools.dataset.shown !== names.join('|')) {
     tools.dataset.shown = names.join('|');
-    tools.replaceChildren(...names.map((n) => h('span', { class: 'tool' }, icon('terminal', 'sm'), n)));
+    tools.replaceChildren(...names.map((n) => h('span', { class: 'tool' }, icon('terminal', 'sm'), toolLabel(n))));
   }
 }
 
@@ -211,7 +223,7 @@ function consultNode(item: Extract<Shown, { kind: 'consult' }>): HTMLElement {
     { class: 'msg consult-msg', 'aria-label': `${NAMES[item.asker]} consultou ${NAMES[item.peer]}` },
     h(
       'details',
-      { class: 'consult', open: true },
+      { class: 'consult' },
       h(
         'summary',
         {},
@@ -233,7 +245,7 @@ function updateConsult(el: HTMLElement, item: Extract<Shown, { kind: 'consult' }
   const stateKey = item.answer ? 'answered' : state.run ? 'waiting' : 'none';
   if (el.dataset.state === stateKey) return;
   el.dataset.state = stateKey;
-  el.querySelector('[data-role=state]')!.textContent = item.answer ? '' : state.run ? 'aguardando resposta…' : 'sem resposta';
+  el.querySelector('[data-role=state]')!.textContent = item.answer ? 'respondido' : state.run ? 'aguardando resposta…' : 'sem resposta';
   el.querySelector('.consult-body')!.replaceChildren(
     h('div', { class: 'q' }, h('b', {}, 'Pergunta'), renderRichText(item.question, copy)),
     item.answer ? h('div', { class: 'a' }, h('b', {}, `Resposta de ${NAMES[item.peer]}`), renderRichText(item.answer.text, copy)) : '',
@@ -241,6 +253,8 @@ function updateConsult(el: HTMLElement, item: Extract<Shown, { kind: 'consult' }
 }
 
 export function renderMessages(instant = false): void {
+  renderOffice();
+  ctx.renderHarness();
   const nearBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 160;
   const conv = state.current;
   const items: Parameters<typeof syncChildren>[1] = [];
@@ -248,10 +262,16 @@ export function renderMessages(instant = false): void {
     items.push({ key: 'empty', create: emptyState });
   } else {
     for (const shown of group(conv.messages)) {
-      if (shown.kind === 'message') items.push({ key: `m:${conv.meta.id}:${shown.message.index}`, create: () => messageNode(shown.message) });
+      if (shown.kind === 'message') {
+        items.push({ key: `m:${conv.meta.id}:${shown.message.index}`, create: () => messageNode(shown.message) });
+        if (shown.message.author === 'user') {
+          const run = matchRun(shown.message, conversationRuns());
+          if (run) items.push({ key: `run:${run.id}`, create: () => workCard(run), update: (el) => workCard(run, el) });
+        }
+      }
       else items.push({ key: `c:${conv.meta.id}:${shown.index}`, create: () => consultNode(shown), update: (el) => updateConsult(el, shown) });
     }
-    for (const t of state.run?.live ?? []) items.push({ key: `live:${t.provider}:${conv.meta.id}`, create: () => liveNode(t), update: (el) => updateLive(el, t) });
+    for (const t of state.run?.conversationId === conv.meta.id ? state.run.live : []) items.push({ key: `live:${t.provider}:${conv.meta.id}`, create: () => liveNode(t), update: (el) => updateLive(el, t) });
   }
   // Opening another conversation shows its history at once; only messages that arrive later animate in.
   column.classList.toggle('instant', instant);

@@ -211,12 +211,12 @@ describe('Room.turn', () => {
   it('streams what a UI needs', async () => {
     const events: RoomEvent[] = [];
     const room = new Room({
-      adapters: { claude: stub('claude', () => [{ type: 'tool_call', name: 'Read' }, ...reply('hi')]) },
+      adapters: { claude: stub('claude', () => [{ type: 'tool_call', name: 'Read' }, { type: 'tool_result', name: 'Read', isError: false }, ...reply('hi')]) },
       cwd: '/w',
       onEvent: (e) => events.push(e),
     });
     await room.turn('claude', 'go');
-    expect(events.map((e) => e.type)).toEqual(['turn_start', 'tool_call', 'text', 'turn_end']);
+    expect(events.map((e) => e.type)).toEqual(['turn_start', 'tool_call', 'tool_result', 'text', 'turn_end']);
   });
 });
 

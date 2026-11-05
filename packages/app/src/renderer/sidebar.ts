@@ -2,12 +2,15 @@ import { api } from './bridge.js';
 import { openAppearance } from './appearance.js';
 import { openConnectionsDialog } from './connections.js';
 import { ctx } from './ctx.js';
-import { clear, dayGroup, formatTime, h, keepFocus, relativeTime } from './dom.js';
+import { clear, dayGroup, h, keepFocus, relativeTime } from './dom.js';
 import { appMark, engineMark, icon, providerMark } from './icons.js';
 import { NAMES, PROVIDERS, provider, state } from './state.js';
 import { confirmDialog, toast } from './ui.js';
+import { openQuotas } from './quotas.js';
 
 export const sidebarEl = h('nav', { class: 'sidebar', 'aria-label': 'Conversas, modelos e bancos de dados' });
+let modelsCollapsed = false;
+try { modelsCollapsed = localStorage.getItem('aio.models.collapsed') === 'true'; } catch { /* defaults */ }
 
 function statusOf(id: (typeof PROVIDERS)[number]): { text: string; cls: string; ic: 'check' | 'alert' | 'info' } {
   const p = provider(id);
@@ -75,7 +78,13 @@ function modelsPanel(): HTMLElement {
     h(
       'div',
       { class: 'panel-head' },
-      h('span', { id: 'models-h' }, 'Modelos'),
+      h('button', { id: 'models-h', class: 'models-toggle', type: 'button', 'data-fk': 'toggle-models', 'aria-expanded': String(!modelsCollapsed), 'aria-controls': 'models-body',
+        title: modelsCollapsed ? 'Expandir modelos' : 'Recolher modelos', onClick: () => {
+          modelsCollapsed = !modelsCollapsed;
+          try { localStorage.setItem('aio.models.collapsed', String(modelsCollapsed)); } catch { /* storage unavailable */ }
+          renderSidebar();
+        } }, icon('chevron', `sm${modelsCollapsed ? ' folded' : ''}`), 'Modelos',
+        modelsCollapsed ? h('span', { class: 'models-count' }, `${PROVIDERS.filter((id) => provider(id)?.available && provider(id)?.signedIn === true).length} conectados`) : ''),
       h(
         'button',
         { class: 'icon-btn sm', type: 'button', 'aria-label': 'Verificar modelos de novo', title: 'Verificar de novo', disabled: state.providersLoading, 'data-fk': 'refresh-models', onClick: () => void ctx.refreshProviders() },
@@ -83,11 +92,13 @@ function modelsPanel(): HTMLElement {
       ),
     ),
   );
+  const body = h('div', { id: 'models-body', hidden: modelsCollapsed });
+  panel.append(body);
   for (const id of PROVIDERS) {
     const p = provider(id);
     const st = statusOf(id);
     const off = !p?.available;
-    panel.append(
+    body.append(
       h(
         'div',
         { class: 'prov' },
@@ -104,19 +115,19 @@ function modelsPanel(): HTMLElement {
       ),
     );
     const note = !p ? '' : !p.available ? (p.reason ?? '') : p.signedIn === false && !p.canLogin ? 'Abra o programa uma vez no terminal e entre com a sua conta.' : '';
-    if (note) panel.append(h('p', { class: 'prov-note' }, note));
-    for (const line of state.loginOutput[id] ?? []) panel.append(h('p', { class: 'prov-note' }, line));
+    if (note) body.append(h('p', { class: 'prov-note' }, note));
+    for (const line of state.loginOutput[id] ?? []) body.append(h('p', { class: 'prov-note' }, line));
   }
   const usage = Object.entries(state.usage);
   if (usage.length) {
     const lines = usage.map(([id, u]) => {
       const tokens = u.inputTokens + u.outputTokens;
-      const win = u.window?.resetsAt ? ` · renova às ${formatTime(new Date(u.window.resetsAt).toISOString())}` : '';
       const limited = u.limitedUntil && u.limitedUntil > Date.now() ? ' · em pausa' : '';
-      return `${NAMES[id as keyof typeof NAMES] ?? id}: ${u.turns} turno${u.turns === 1 ? '' : 's'}, ${tokens.toLocaleString('pt-BR')} tokens${win}${limited}`;
+      return `${NAMES[id as keyof typeof NAMES] ?? id}: ${u.turns} turno${u.turns === 1 ? '' : 's'}, ${tokens.toLocaleString('pt-BR')} tokens${limited}`;
     });
-    panel.append(h('div', { class: 'usage-line', 'aria-label': 'Uso nesta sessão' }, ...lines.flatMap((l, i) => (i ? [h('br'), l] : [l]))));
+    body.append(h('div', { class: 'usage-line', 'aria-label': 'Uso nesta sessão' }, h('b', {}, 'Uso nesta sessão do app'), h('br'), ...lines.flatMap((l, i) => (i ? [h('br'), l] : [l]))));
   }
+  panel.append(h('button', { class: 'btn text block', type: 'button', 'data-fk': 'open-quotas', onClick: openQuotas }, icon('plan', 'sm'), 'Limites e uso'));
   return panel;
 }
 

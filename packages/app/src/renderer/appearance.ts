@@ -41,6 +41,14 @@ export function openAppearance(): void {
           motion.setAttribute('aria-checked', String(appearance.reduceMotion));
         },
       });
+      const office = h('button', {
+        type: 'button', class: 'switch', role: 'switch',
+        'aria-checked': String(appearance.office3d), 'aria-labelledby': 'ap-office',
+        onClick: () => {
+          setAppearance({ office3d: !appearance.office3d });
+          office.setAttribute('aria-checked', String(appearance.office3d));
+        },
+      });
       return h(
         'div',
         { class: 'dialog-pad' },
@@ -48,6 +56,8 @@ export function openAppearance(): void {
         h('div', { class: 'opt-row' }, h('b', { id: 'ap-theme' }, 'Tema'), theme.el),
         h('div', { class: 'opt-row' }, h('b', { id: 'ap-size' }, 'Tamanho do texto'), size.el),
         h('div', { class: 'opt-row' }, h('b', { id: 'ap-motion' }, 'Reduzir animações'), motion),
+        h('div', { class: 'opt-row' }, h('b', { id: 'ap-office' }, 'Escritório 3D'), office),
+        h('p', { class: 'muted small' }, 'Um espaço com personagens para acompanhar sua equipe, junto do chat. Opcional e salvo neste computador.'),
         h('p', { class: 'muted small' }, 'O app também respeita a opção de reduzir movimento do Windows.'),
         h('div', { class: 'row-end' }, h('button', { class: 'btn primary', type: 'button', onClick: close }, 'Pronto')),
       );

@@ -86,6 +86,61 @@ signed out.
 4. Ask for help in plain words whenever you like: *"ask Gemini to review this"*, *"get a second opinion from Codex before
    you change anything"*.
 
+### Workspace and execution history
+
+Click **Modelos** in the sidebar to collapse or expand the connection list. The preference is saved locally;
+**Limites e uso** remains available while the list is collapsed.
+
+**Limites e uso** separates this app session's tokens and turns from subscription quotas. For Codex signed in with
+ChatGPT, it reads quota windows through the official App Server without creating a thread or running a model, cached
+for up to one minute. For Claude, it shows windows and percentages reported by the CLI during runs; missing values are
+not estimated. Windows past their reset time are marked as awaiting an update. It includes links to the Claude and
+Codex usage dashboards and instructions for `/usage` in Antigravity (`agy`). Antigravity quotas are not read automatically.
+Local counters exclude usage outside this app and reset when the app restarts.
+
+Use **Atividade**, **Arquivos**, and **Navegador** in the top bar to open the workspace beside the chat.
+
+- **Activity** shows observed execution stages, tools, teammate consultations, reported tokens, elapsed time, and a stop
+  button. Completed run records are saved locally per conversation and remain available after reopening the app.
+- **Files** explores the conversation's project folder and previews text with line numbers. It is read-only; **Inserir
+  trecho no chat** adds a bounded excerpt to your draft for review before sending. Paths outside the project, including
+  links pointing outside it, are rejected. Previews are limited to 256 KB and 2,500 lines.
+- **Browser** opens HTTP(S) sites and localhost inside Electron, with back, forward, and reload controls. Response links
+  open here too. The page uses a separate browser session without the app's privileged bridge. This is a browser for the
+  user; it does not add autonomous browsing tools to the models. The development web preview offers an external tab instead.
+
+Chat responses support tables, nested lists, checklists, quotes, and code blocks with language labels and copy controls.
+Consultations stay collapsible, with a compact work summary linking to the execution timeline. Run records keep a short
+prompt excerpt and activity metadata; they do not duplicate model answers or private instructions. Only completed runs
+are persisted, so this is not recovery of an interrupted execution after a crash.
+
+![Formatted chat and read-only project explorer, using demonstration models](docs/screenshots/harness-files.jpg)
+
+![Native browser inside the desktop workspace](docs/screenshots/harness-browser.png)
+
+### Optional 3D office
+
+Select **Escritório 3D** in the top bar, or enable it under **Aparência**. Claude, Gemini, and Codex each have a local,
+animated cartoon mascot and a desk, with the chat alongside. Drag to orbit, scroll to zoom, and select a character or its
+name. **Escolher como líder** changes the chat's selected provider without starting a run.
+
+The setting starts off and is saved locally. The 3D engine loads only when enabled, pauses in the background, and releases
+graphics resources when disabled. Reduced motion (including the system preference) keeps a static scene with live status
+updates. If WebGL cannot start, the chat remains usable. Characters use procedural local geometry.
+
+Speech bubbles and gestures follow real tool and run events: file reading and editing, terminal commands, search,
+database queries, and replies. MCP consultations also animate the consulted colleague and waiting lead. Tool completion
+returns the character to checking the result. Unknown tools use a generic gesture instead of guessing from prompt text.
+
+Open **Loja & estilo** to try on and equip outfits, hats, and accessories in a live 3D fitting room, or recolor the office.
+This collection is free; each AI has an independent combination and the wardrobe is saved locally. Trying an item does
+not replace the equipped item until you choose **Resgatar grátis e equipar** or **Equipar**. The animation pace selector
+defaults to **Tranquilo**, with longer rests and staggered gestures.
+
+![3D office using demonstration models](docs/screenshots/office-refined.jpg)
+
+![Local clothing shop with live 3D fitting room](docs/screenshots/office-shop.jpg)
+
 ### Connecting a database
 
 Create a database user that can **only `SELECT`** what the models may see, then open **Databases** in the sidebar,

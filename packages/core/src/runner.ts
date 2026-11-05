@@ -32,7 +32,7 @@ export class CliAbortError extends Error {
 
 const STDERR_LIMIT = 4_000;
 
-function killTree(child: ChildProcess): void {
+export function killTree(child: ChildProcess): void {
   if (child.pid === undefined || child.exitCode !== null) return;
   if (process.platform === 'win32') {
     // Model CLIs spawn their own children (tools, MCP servers); kill the whole tree.

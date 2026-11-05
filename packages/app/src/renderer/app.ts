@@ -9,6 +9,8 @@ import { renderSidebar, sidebarEl } from './sidebar.js';
 import { buildSpec, canLead, loadConfig, NAMES, PROVIDERS, ready, saveConfig, state, teamMembers } from './state.js';
 import { loadAppearance } from './theme.js';
 import { openDialog, toast } from './ui.js';
+import { initOffice, officeEl, onOfficeEvent, startOfficeRun } from './office.js';
+import { harnessEl, initHarness, onHarnessEvent, openBrowser, renderHarness, startHarnessRun, togglePanel, loadHarnessConversation } from './harness.js';
 
 loadAppearance();
 installIcons();
@@ -18,8 +20,13 @@ promptEl.id = 'prompt';
 const root = document.getElementById('app')!;
 root.append(
   h('a', { class: 'skip', href: '#prompt', onClick: (e: Event) => { e.preventDefault(); promptEl.focus(); } }, 'Ir para a mensagem'),
-  h('div', { class: 'shell' }, sidebarEl, h('main', { class: 'main', id: 'main' }, topbarEl, messagesEl, composerEl)),
+  h('div', { class: 'shell' }, sidebarEl, h('main', { class: 'main', id: 'main' }, topbarEl,
+    h('div', { class: 'workbench' }, h('div', { class: 'workspace' }, officeEl, h('section', { class: 'chat-pane', 'aria-label': 'Chat' }, messagesEl, composerEl)), harnessEl))),
 );
+initOffice();
+initHarness();
+new ResizeObserver(() => { topbarEl.parentElement?.style.setProperty('--topbar-h', `${topbarEl.offsetHeight}px`); }).observe(topbarEl);
+window.addEventListener('aio:appearance', renderTopbar);
 
 const fail = (err: unknown) => toast(err instanceof Error ? err.message : String(err), 'error');
 
@@ -83,6 +90,7 @@ async function openConversation(id: string, keepScroll = false): Promise<void> {
   renderSidebar();
   renderTopbar();
   renderMessages(!keepScroll);
+  loadHarnessConversation();
   if (!keepScroll) scrollToEnd();
 }
 
@@ -168,6 +176,8 @@ async function send(): Promise<void> {
     const conversationId = state.current!.meta.id;
     const { runId } = await api.startRun({ conversationId, prompt: text, spec, connections: state.config.connections, peerTools: canLead(state.config.lead.provider) && teamMembers().length > 0 });
     state.run = { runId, conversationId, live: [] };
+    startHarnessRun(runId, { conversationId, prompt: text, spec, connections: state.config.connections, peerTools: canLead(state.config.lead.provider) && teamMembers().length > 0 });
+    startOfficeRun(conversationId);
     setPrompt('');
     state.current = await api.getConversation(conversationId);
     renderComposer();
@@ -181,6 +191,8 @@ async function send(): Promise<void> {
 // ---------- events from the main process ----------
 
 function onAppEvent(ev: AppEvent): void {
+  onHarnessEvent(ev);
+  if (ev.type === 'browser') return;
   if (ev.type === 'login') {
     const lines = (state.loginOutput[ev.provider] ??= []);
     if (ev.event.type === 'output') {
@@ -196,18 +208,22 @@ function onAppEvent(ev: AppEvent): void {
     return;
   }
   if (!state.run || ev.runId !== state.run.runId) return;
+  onOfficeEvent(ev);
   if (ev.type === 'room') {
     const e = ev.event;
     const live = state.run.live;
     if (e.type === 'turn_start') {
       const i = live.findIndex((l) => l.provider === e.provider);
       if (i >= 0) live.splice(i, 1);
-      live.push({ provider: e.provider, text: '', tools: [] });
+      live.push({ provider: e.provider, text: '', tools: [], note: 'trabalhando…' });
     } else if (e.type === 'text') {
       const turn = live.find((l) => l.provider === e.provider);
-      if (turn) turn.text = e.partial ? turn.text + e.text : e.text;
+      if (turn) { turn.text = e.partial ? turn.text + e.text : e.text; turn.note = 'preparando resposta…'; }
     } else if (e.type === 'tool_call') {
       live.find((l) => l.provider === e.provider)?.tools.push(e.name);
+    } else if (e.type === 'tool_result') {
+      const turn = live.find((l) => l.provider === e.provider);
+      if (turn) turn.note = e.isError ? 'conferindo um problema na ferramenta…' : 'conferindo o resultado…';
     } else if (e.type === 'skipped') {
       toast(`${NAMES[e.provider]} foi ignorado: ${e.reason}.`);
     } else if (e.type === 'turn_end') {
@@ -215,7 +231,7 @@ function onAppEvent(ev: AppEvent): void {
       void api.getConversation(ev.conversationId).then((c) => {
         if (state.current?.meta.id === c.meta.id) state.current = c;
         const run = state.run;
-        if (run) run.live = run.live.filter((l) => l.provider !== e.provider);
+        if (run?.runId === ev.runId) run.live = run.live.filter((l) => l.provider !== e.provider);
         renderMessages();
         void refreshUsage();
       });
@@ -233,7 +249,7 @@ function onAppEvent(ev: AppEvent): void {
       toast('Cancelado.');
     }
     renderComposer();
-    void Promise.all([openConversation(ev.conversationId, true), refreshConversations(), refreshUsage()]);
+    void Promise.all([state.current?.meta.id === ev.conversationId ? openConversation(ev.conversationId, true) : Promise.resolve(), refreshConversations(), refreshUsage()]);
   }
 }
 
@@ -262,6 +278,7 @@ Object.assign(ctx, {
   renderComposer,
   focusComposer,
   setPrompt,
+  openBrowser, renderHarness, togglePanel,
 });
 
 renderSidebar();

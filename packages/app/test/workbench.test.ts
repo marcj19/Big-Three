@@ -1,0 +1,50 @@
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { stat, writeFile } from 'node:fs/promises';
+import { describe, expect, it } from 'vitest';
+import { browserUrl } from '../src/shared/browser-url.js';
+import { newRunRecord, recordWork } from '../src/shared/work-trace.js';
+import { RunJournal } from '../src/services/run-journal.js';
+import type { AppEvent, StartRun } from '../src/shared/api.js';
+import { tmp } from './helpers.js';
+
+const input = (): StartRun => ({ conversationId: randomUUID(), prompt: 'Implemente uma feature', spec: { kind: 'chat', providers: ['claude'], access: 'read-only' }, connections: [], peerTools: true });
+const room = (runId: string, conversationId: string, event: Extract<AppEvent, { type: 'room' }>['event']): AppEvent => ({ type: 'room', runId, conversationId, event });
+describe('browser navigation policy', () => {
+  it('accepts websites and local previews, but refuses executable schemes and embedded credentials', () => {
+    expect(browserUrl('example.com')).toBe('https://example.com/');
+    expect(browserUrl('localhost:3000/path')).toBe('http://localhost:3000/path');
+    expect(browserUrl('http://127.0.0.1:4173')).toBe('http://127.0.0.1:4173/');
+    for (const url of ['javascript:alert(1)', 'file:///C:/secret', 'data:text/html,test', 'about:blank', 'https://user:pass@example.com', 'https://exa mple.com']) expect(() => browserUrl(url)).toThrow();
+  });
+});
+describe('execution journal', () => {
+  it('records observed tools and peer cooperation without copying model answer contents', () => {
+    const task = input(), id = randomUUID(), run = newRunRecord(id, task);
+    recordWork(run, room(id, task.conversationId, { type: 'turn_start', provider: 'claude', instruction: 'private system instruction' }));
+    recordWork(run, room(id, task.conversationId, { type: 'tool_call', provider: 'claude', name: 'read_file' }));
+    recordWork(run, room(id, task.conversationId, { type: 'tool_result', provider: 'claude', name: 'read_file', isError: false }));
+    for (const activity of ['thinking', 'writing', 'done'] as const) recordWork(run, { type: 'peer_activity', runId: id, conversationId: task.conversationId, self: 'claude', peer: 'gemini', activity });
+    for (let i = 0; i < 50; i++) recordWork(run, room(id, task.conversationId, { type: 'text', provider: 'claude', text: 'private output', partial: true }));
+    recordWork(run, { type: 'run_done', runId: id, conversationId: task.conversationId, outcome: { status: 'ok', final: 'private final' } });
+    expect(run.entries.filter((entry) => entry.kind === 'consult')).toHaveLength(1);
+    expect(run.entries.find((entry) => entry.kind === 'tool')).toMatchObject({ status: 'done', label: 'Lendo arquivos' });
+    expect(run.status).toBe('ok'); expect(run.entries.filter((entry) => entry.status === 'running')).toHaveLength(0);
+    expect(JSON.stringify(run)).not.toContain('private');
+  });
+  it('persists history across app instances, isolates conversations and deletes their records', async () => {
+    const dir = await tmp(), journal = new RunJournal(dir), task = input(), id = randomUUID();
+    journal.begin(id, task);
+    journal.event(id, { type: 'run_done', runId: id, conversationId: task.conversationId, outcome: { status: 'cancelled', final: '' } });
+    await journal.save(id);
+    const restored = new RunJournal(dir);
+    expect(await restored.list(task.conversationId)).toMatchObject([{ id, status: 'cancelled' }]);
+    expect(await restored.list(randomUUID())).toEqual([]);
+    await writeFile(path.join(dir, task.conversationId, `${randomUUID()}.json`), '{broken');
+    expect(await restored.list(task.conversationId)).toHaveLength(1);
+    await restored.removeConversation(task.conversationId);
+    expect(await restored.list(task.conversationId)).toEqual([]);
+    await expect(stat(path.join(dir, task.conversationId))).rejects.toThrow();
+    await expect(restored.removeConversation('../escape')).rejects.toThrow();
+  });
+});

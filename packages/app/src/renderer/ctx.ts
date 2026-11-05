@@ -14,4 +14,7 @@ export const ctx = {
   renderComposer: (_animate?: boolean): void => {},
   focusComposer: (): void => {},
   setPrompt: (_text: string): void => {},
+  openBrowser: (_url: string): void => {},
+  renderHarness: (): void => {},
+  togglePanel: (_panel: 'activity' | 'files' | 'browser'): void => {},
 };

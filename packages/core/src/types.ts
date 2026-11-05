@@ -1,5 +1,12 @@
 export type ProviderId = 'claude' | 'gemini' | 'codex';
 
+export interface QuotaWindow {
+  name: string;
+  usedPercent?: number;
+  resetsAt?: number;
+  status?: string;
+}
+
 /** How much the model may do on its own. Maps to each CLI's own permission mode. */
 export type Access = 'read-only' | 'edit' | 'full';
 
@@ -45,7 +52,7 @@ export type AgentEvent =
   | { type: 'tool_result'; name?: string; isError?: boolean }
   | { type: 'usage'; inputTokens?: number; outputTokens?: number; costUsd?: number }
   /** Subscription-limit state the CLI reported. `resetsAt` is epoch milliseconds. */
-  | { type: 'limit'; status: string; window?: string; resetsAt?: number }
+  | { type: 'limit'; status: string; window?: string; resetsAt?: number; usedPercent?: number }
   | { type: 'error'; message: string }
   /** Always the last event of a run. */
   | { type: 'done'; status: DoneStatus; text?: string };
@@ -80,6 +87,8 @@ export interface Adapter {
   readonly efforts: readonly string[];
   /** Models to offer in a picker. Costs no quota; the first entry is the account default. */
   listModels(): Promise<ModelOption[]>;
+  /** Read account quotas without starting a model turn, when the CLI supports it. */
+  readQuota?(): Promise<QuotaWindow[]>;
   detect(): Promise<Availability>;
   authStatus(): Promise<AuthStatus>;
   /** Starts the CLI's own browser sign-in. The app never sees the password or tokens. */

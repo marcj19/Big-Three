@@ -181,14 +181,17 @@ export class Room {
           case 'tool_call':
             emit?.({ type: 'tool_call', provider, name: ev.name });
             break;
+          case 'tool_result':
+            emit?.({ type: 'tool_result', provider, name: ev.name, isError: ev.isError === true });
+            break;
           case 'usage':
             usage.inputTokens += ev.inputTokens ?? 0;
             usage.outputTokens += ev.outputTokens ?? 0;
             usage.costUsd += ev.costUsd ?? 0;
             break;
           case 'limit':
-            this.usage.noteWindow(provider, { status: ev.status, name: ev.window, resetsAt: ev.resetsAt });
-            emit?.({ type: 'limit', provider, status: ev.status, window: ev.window, resetsAt: ev.resetsAt });
+            this.usage.noteWindow(provider, { status: ev.status, name: ev.window, resetsAt: ev.resetsAt, usedPercent: ev.usedPercent });
+            emit?.({ type: 'limit', provider, status: ev.status, window: ev.window, resetsAt: ev.resetsAt, usedPercent: ev.usedPercent });
             break;
           case 'error':
             error = error ? `${error}; ${ev.message}` : ev.message;

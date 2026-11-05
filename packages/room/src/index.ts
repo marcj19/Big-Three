@@ -1,4 +1,5 @@
 export * from './types.js';
+export { peerActivityReporter, fileActivitySink, type PeerActivity } from './peer-activity.js';
 export { Room, type RoomConfig, type PlannedTurn } from './room.js';
 export { FileTranscript, MemoryTranscript, renderTranscript } from './transcript.js';
 export { UsageTracker, looksRateLimited, type ProviderUsage } from './usage.js';
