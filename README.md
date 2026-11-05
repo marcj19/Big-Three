@@ -21,8 +21,9 @@ and never asks for API keys.
   Each consultation shows up in the chat as a card with the question and the answer.
 - **You stay in charge of the team.** Choose which colleagues can be consulted and which model each one answers with.
   Colleagues only read and answer; **only the lead changes files**, and only with the access you gave it.
-- **Safe by default.** Models start read-only. Letting one edit files or run commands asks you in a native dialog
-  first, every time.
+  Enable **Consultar equipe automaticamente** to collect the team's recommendations before the lead answers.
+- **Safe by default.** Each conversation starts in read-only mode. Confirm expanded access once in the native dialog.
+  The grant lasts for that conversation until you lower access or close the app.
 - **Real model choice.** Claude (Opus, Sonnet, Haiku, pinned versions, effort), Gemini (everything your Antigravity
   account offers, including Claude and GPT-OSS models) and Codex (any model name, effort).
 - **Database access without exposing credentials.** Connect PostgreSQL, MySQL or Oracle. Models can run `SELECT`
@@ -45,7 +46,7 @@ and never asks for API keys.
 
 - **Windows 10 or 11** (developed and used on Windows 11; macOS and Linux are not tried yet, see
   [Platform support](#platform-support)).
-- **[Node.js](https://nodejs.org) 20 or newer.**
+- **[Node.js](https://nodejs.org) 20 or newer** to run from source or build the executable.
 - **At least one of these CLIs, installed and signed in with your own account** (the more, the better the team):
   - **Claude Code** (`claude`), with a Claude subscription.
   - **Antigravity CLI** (`agy`), for Gemini, with a Google account.
@@ -53,7 +54,14 @@ and never asks for API keys.
 
 ## Install and run
 
-**Easiest on Windows:** download the project (green **Code** button, then **Download ZIP**, and unzip it), then
+**Windows x64 installer.** Download and run **Big-Three-Setup-…-x64.exe** from the releases page. The installer adds
+shortcuts to launch Big Three. Use **Atualizações** in the sidebar to download and install newer releases from the app.
+[GitHub Releases](https://github.com/marcj19/Big-Three/releases)
+
+**Portable Windows build:** after `npm ci`, run `npm run package:win` to generate the portable folder under `dist`.
+Open **Big Three.exe** inside it. Keep the entire folder together because it contains Electron and the app's dependencies.
+
+**From source:** download the project (green **Code** button, then **Download ZIP**, and unzip it), then
 double-click **`Big-Three.cmd`**. The first run installs what it needs (a few minutes, including a one-time download of
 the Electron runtime, about 110 MB). After that it opens right away.
 
@@ -150,8 +158,8 @@ connections the models may query.
 
 ## How it stays safe
 
-- **Read-only unless you say otherwise**, and write access is confirmed by a native dialog the page cannot answer. It is
-  not remembered between sessions, and a usage limit never moves a job that may change files to another model.
+- **Conversation access.** A native dialog confirms each increase in access. The main process keeps the grant for that
+  conversation while the app is open. Usage limit fallback applies only to read-only runs.
 - **Colleagues cannot change anything.** A consulted model runs read-only and gets neither the room tools nor the database tools,
   so questions cannot fan out.
 - **Database defence in depth:** a `SELECT`-only database user (the layer that matters), a SQL guard, read-only
@@ -177,7 +185,6 @@ model there signals only the process it started, not its children. Reports and f
 - **Gemini can be consulted but cannot consult others or query databases.** The Antigravity CLI offers no clean way to
   attach tools to a single session yet, and changing its global configuration without asking would not be polite.
 - **Codex has no model list** to choose from; use *Other…* and type a model name.
-- **No installer yet.** The app runs from the source folder; packaging is planned.
 
 ## Not affiliated
 

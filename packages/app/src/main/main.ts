@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { configDir } from '@aio/db-broker';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, session, type IpcMainInvokeEvent } from 'electron';
@@ -7,6 +7,8 @@ import { AppService } from '../services/app-service.js';
 import { API_METHODS, type AppEvent } from '../shared/api.js';
 import { EmbeddedBrowser } from './browser.js';
 import { demoAdapters } from '../dev/demo-adapters.js';
+import electronUpdater from 'electron-updater';
+import { AppUpdates } from './updates.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const pageUrl = pathToFileURL(path.join(here, '..', 'renderer', 'index.html')).href;
@@ -18,6 +20,10 @@ if (process.env.AIO_DEMO === '1') {
 
 let win: BrowserWindow | null = null;
 const browser = new EmbeddedBrowser((state) => win?.webContents.send('aio:event', { type: 'browser', state } satisfies AppEvent));
+const installed = process.platform === 'win32' && app.isPackaged && process.env.AIO_DEMO !== '1'
+  && existsSync(path.join(process.resourcesPath, 'app-update.yml'));
+const updates = new AppUpdates(app.getVersion(), installed ? electronUpdater.autoUpdater : undefined,
+  (state) => win?.webContents.send('aio:event', { type: 'update', state } satisfies AppEvent));
 
 const confirmAccess = async ({ access, cwd, summary }: { access: 'edit' | 'full'; cwd: string; summary: string }) => {
   const full = access === 'full';
@@ -28,7 +34,7 @@ const confirmAccess = async ({ access, cwd, summary }: { access: 'edit' | 'full'
     cancelId: 0,
     title: 'Permitir que o modelo altere arquivos?',
     message: full ? 'Acesso TOTAL: o modelo pode rodar comandos e alterar arquivos sem pedir.' : 'O modelo poderá criar e editar arquivos.',
-    detail: `${summary}\n\nPasta: ${cwd}`,
+    detail: `${summary}\n\nPasta: ${cwd}\n\nA autorização vale nesta conversa até você reduzir o acesso ou fechar o aplicativo.`,
   });
   return response === 1;
 };
@@ -36,6 +42,7 @@ const confirmAccess = async ({ access, cwd, summary }: { access: 'edit' | 'full'
 const service = new AppService({
   configDir: configDir(),
   browser,
+  updates,
   adapters: process.env.AIO_DEMO === '1' ? demoAdapters() : undefined,
   confirmAccess,
   emit: (event: AppEvent) => win?.webContents.send('aio:event', event),
@@ -96,8 +103,10 @@ if (process.env.AIO_DEMO !== '1' && !app.requestSingleInstanceLock()) {
     win?.focus();
   });
   void app.whenReady().then(() => {
+    if (process.platform === 'win32') app.setAppUserModelId('com.marcj19.bigthree');
     session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
     createWindow();
+    if (installed) setTimeout(() => void updates.perform('check'), 3000).unref();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });

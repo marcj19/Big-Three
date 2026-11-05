@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { ClaudeAdapter } from '../src/adapters/claude.js';
 import { CodexAdapter } from '../src/adapters/codex.js';
 import { GeminiAdapter } from '../src/adapters/gemini.js';
@@ -90,6 +90,24 @@ describe('resolveCommand', () => {
 
   it('reports a missing executable clearly', async () => {
     await expect(resolveCommand('definitely-not-installed-xyz', { searchDirs: [] })).rejects.toThrow(/Could not find/);
+  });
+
+  it.skipIf(process.platform !== 'win32')('finds agy in the default Windows installation folder without PATH', async () => {
+    const local = await mkdir_();
+    const bin = path.join(local, 'agy', 'bin');
+    await mkdir(bin, { recursive: true });
+    const executable = path.join(bin, 'agy.exe');
+    await writeFile(executable, '');
+    class GeminiProbe extends GeminiAdapter {
+      resolve() { return this.command(); }
+    }
+    vi.stubEnv('PATH', '');
+    vi.stubEnv('LOCALAPPDATA', local);
+    try {
+      expect((await new GeminiProbe().resolve()).file).toBe(executable);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

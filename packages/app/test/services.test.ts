@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ConnectionService } from '../src/services/connections.js';
 import { ConversationStore } from '../src/services/conversations.js';
 import type { StartRun } from '../src/shared/api.js';
@@ -162,6 +162,28 @@ describe('AppService', () => {
   });
 
   describe('write access', () => {
+    it('reuses a conversation grant and requires approval again after escalation or revocation', async () => {
+      const asked: string[] = [];
+      const claude = stub('claude', 'OK');
+      const { app, workdir, events } = await makeApp({ adapters: { claude }, confirmAccess: async ({ access }) => (asked.push(access), true) });
+      const conv = await app.createConversation({ cwd: workdir });
+      const other = await app.createConversation({ cwd: workdir });
+      expect(await app.setConversationAccess(conv.id, 'edit')).toBe('edit');
+      for (let i = 1; i <= 2; i++) {
+        const { runId } = await app.startRun(chat(conv.id, { spec: { kind: 'chat', providers: ['claude'], access: 'edit' } }));
+        await vi.waitFor(() => expect(events.some((e) => e.type === 'run_done' && e.runId === runId)).toBe(true));
+      }
+      expect(asked).toEqual(['edit']);
+      expect(claude.requests.map((r) => r.access)).toEqual(['edit', 'edit']);
+      expect((await app.getConversation(other.id)).access).toBe('read-only');
+      expect((await app.getConversation(conv.id)).access).toBe('edit');
+      await app.setConversationAccess(conv.id, 'full');
+      await app.setConversationAccess(conv.id, 'edit');
+      await app.setConversationAccess(conv.id, 'read-only');
+      expect((await app.getConversation(conv.id)).access).toBe('read-only');
+      await app.setConversationAccess(conv.id, 'edit');
+      expect(asked).toEqual(['edit', 'full', 'edit']);
+    });
     const planWith = (executorAccess: 'edit' | 'full'): StartRun['spec'] => ({ kind: 'plan', planner: 'claude', executor: 'claude', executorAccess });
 
     it('is refused when nothing confirms it, and nothing starts', async () => {

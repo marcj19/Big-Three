@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { ModelChoice, StartRun } from '../src/shared/api.js';
 import { makeApp, stub, type StubAdapter } from './helpers.js';
 
-const lead = (conversationId: string, over: { lead?: ModelChoice; access?: 'read-only' | 'edit' | 'full'; team?: ModelChoice[]; fallback?: boolean; peerTools?: boolean; prompt?: string } = {}): StartRun => ({
+const lead = (conversationId: string, over: { lead?: ModelChoice; access?: 'read-only' | 'edit' | 'full'; team?: ModelChoice[]; consultTeam?: boolean; fallback?: boolean; peerTools?: boolean; prompt?: string } = {}): StartRun => ({
   conversationId,
   prompt: over.prompt ?? 'Do the thing',
-  spec: { kind: 'lead', lead: over.lead ?? { provider: 'claude' }, access: over.access ?? 'read-only', team: over.team ?? [], fallback: over.fallback ?? false },
+  spec: { kind: 'lead', lead: over.lead ?? { provider: 'claude' }, access: over.access ?? 'read-only', team: over.team ?? [], consultTeam: over.consultTeam, fallback: over.fallback ?? false },
   connections: [],
   peerTools: over.peerTools ?? false,
 });
@@ -54,6 +54,23 @@ describe('one model leads', () => {
     expect((await done(conv.id)).outcome).toMatchObject({ status: 'ok', final: 'Alone' });
     expect(gemini.requests[0]!.mcpServers).toBeUndefined();
     expect(gemini.requests[0]!.systemPrompt).not.toMatch(/lead of a small team/);
+  });
+
+  it('consults selected models before the lead responds when automatic consultation is enabled', async () => {
+    const claude = stub('claude', 'Claude recommendation');
+    const gemini = stub('gemini', 'Final answer', { mcp: false });
+    const codex = stub('codex', 'Codex recommendation');
+    const { app, workdir, events, done } = await makeApp({ adapters: { claude, gemini, codex } });
+    const conv = await app.createConversation({ cwd: workdir });
+    await app.startRun(lead(conv.id, { lead: { provider: 'gemini' }, consultTeam: true,
+      team: [{ provider: 'claude', model: 'opus', effort: 'high' }, { provider: 'codex', model: 'gpt-example', effort: 'low' }] }));
+    expect((await done(conv.id)).outcome.final).toBe('Final answer');
+    expect(claude.requests[0]).toMatchObject({ model: 'opus', effort: 'high', access: 'read-only' });
+    expect(codex.requests[0]).toMatchObject({ model: 'gpt-example', effort: 'low', access: 'read-only' });
+    expect(claude.requests[0]?.mcpServers).toBeUndefined();
+    expect(gemini.requests[0]?.prompt).toContain('Claude recommendation');
+    expect(gemini.requests[0]?.prompt).toContain('Codex recommendation');
+    expect(events).toContainEqual(expect.objectContaining({ type: 'peer_activity', self: 'gemini', peer: 'claude', activity: 'done' }));
   });
 
   it('asks before any write access and starts nothing without it', async () => {

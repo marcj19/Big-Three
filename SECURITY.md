@@ -18,8 +18,8 @@ Big Three lets AI models act on your computer and query your databases, so its s
 - **Models cannot write to your database.** Queries pass a SQL guard (a single `SELECT` or `WITH ... SELECT`; writes, DDL,
   locking and dangerous functions are rejected) and run in read-only transactions with timeouts and row limits. The
   strongest layer is yours to provide: **use a database user that only has `SELECT`**.
-- **Models start read-only.** Editing files or running commands needs a native confirmation, which the page cannot answer,
-  and is not remembered between sessions.
+- **Models start read-only.** A native dialog confirms each increase in access. The main process keeps the grant in memory
+  for the selected conversation and folder until access is reduced or the app closes.
 - **Consulted models cannot change anything.** They run read-only, without the room or database tools.
 - **The window is sandboxed.** Context isolation, no Node in the page, a strict content security policy, model output
   inserted as text, and every call from the page validated by the main process.

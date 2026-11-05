@@ -111,7 +111,7 @@ export type RunSpec =
    * One model leads and decides for itself when to consult the team (read-only teammates, on the models given here).
    * This is how a normal chat works: pick a model, write, and the lead orchestrates what it needs.
    */
-  | { kind: 'lead'; lead: ModelChoice; access: Access; team: ModelChoice[]; fallback: boolean }
+  | { kind: 'lead'; lead: ModelChoice; access: Access; team: ModelChoice[]; fallback: boolean; consultTeam?: boolean }
   /** A list of steps, each with its own model. The other kinds are particular lists of steps. */
   | { kind: 'flow'; steps: FlowStep[]; fallback: boolean };
 
@@ -170,6 +170,7 @@ export type RoomEventView =
   | { type: 'turn_end'; provider: ProviderId; status: 'ok' | 'error' | 'cancelled'; error?: string; inputTokens: number; outputTokens: number };
 
 export type AppEvent =
+  | { type: 'update'; state: UpdateState }
   | { type: 'browser'; state: BrowserState }
   | { type: 'login'; provider: ProviderId; event: LoginEventView }
   | { type: 'peer_activity'; runId: string; conversationId: string; self: ProviderId; peer: ProviderId; activity: 'thinking' | 'writing' | 'tool' | 'done' | 'error' | 'cancelled'; tool?: string }
@@ -181,12 +182,22 @@ export type AppEvent =
   | { type: 'project_preview'; runId: string; conversationId: string; url: string }
   | { type: 'run_done'; runId: string; conversationId: string; outcome: RunOutcome };
 
+export type UpdateCommand = 'check' | 'download' | 'install';
+export interface UpdateState {
+  phase: 'unavailable' | 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'ready' | 'installing' | 'error';
+  version?: string;
+  availableVersion?: string;
+  percent?: number;
+  message?: string;
+}
+
 export interface PendingQuestion extends UserQuestion {
   id: string;
   provider: ProviderId;
 }
 
 export interface Api {
+  update(command?: UpdateCommand): Promise<UpdateState>;
   providersStatus(): Promise<ProviderStatus[]>;
   /** Models a provider offers (the first entry is the account default). Costs no quota. */
   listModels(id: ProviderId): Promise<ModelOption[]>;
@@ -203,7 +214,8 @@ export interface Api {
 
   listConversations(): Promise<ConversationMeta[]>;
   createConversation(input: { cwd: string; title?: string }): Promise<ConversationMeta>;
-  getConversation(id: string): Promise<{ meta: ConversationMeta; messages: MessageView[] }>;
+  getConversation(id: string): Promise<{ meta: ConversationMeta; messages: MessageView[]; access: Access }>;
+  setConversationAccess(id: string, access: Access): Promise<Access>;
   renameConversation(id: string, title: string): Promise<void>;
   deleteConversation(id: string): Promise<void>;
 
@@ -228,6 +240,7 @@ export type ApiMethod = keyof Api;
 
 /** Every method name, for wiring the IPC channels. Kept in sync with `Api` by the type below. */
 export const API_METHODS = [
+  'update',
   'providersStatus',
   'listModels',
   'loginProvider',
@@ -241,6 +254,7 @@ export const API_METHODS = [
   'listConversations',
   'createConversation',
   'getConversation',
+  'setConversationAccess',
   'renameConversation',
   'deleteConversation',
   'startRun',

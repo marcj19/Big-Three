@@ -4,7 +4,7 @@ import { buildPrompt } from './prompt.js';
 import { FileTranscript, MemoryTranscript } from './transcript.js';
 import { looksRateLimited, UsageTracker } from './usage.js';
 import type { RoomEvent, RoomMessage, TranscriptStore, TurnOptions, TurnResult } from './types.js';
-import { parseQuestion } from './question.js';
+import { splitQuestion } from './question.js';
 
 const DEFAULT_TIMEOUT_MS = 600_000;
 
@@ -141,7 +141,7 @@ export class Room {
     while (ask && turn.question && turn.result.status === 'ok') {
       const { question, result } = turn;
       if (++questions > 5) return { ...result, status: 'error', text: '', error: 'O modelo pediu esclarecimentos demais nesta etapa.' };
-      await this.transcript.append({ author: provider, text: question.question });
+      await this.transcript.append({ author: provider, text: result.text });
       this.config.onTranscript?.(provider);
       const beforeAnswer = (await this.transcript.list()).length;
       const answer = options.signal?.aborted ? undefined : await ask(provider, question);
@@ -248,10 +248,11 @@ export class Room {
     }
 
     // The CLI's own final answer wins; otherwise what streamed (a whole message beats concatenated deltas).
-    const rawText = (doneText ?? whole.at(-1) ?? partial.join('')).trim();
-    const question = nativeQuestion ?? (this.config.onQuestion && status === 'ok' ? parseQuestion(rawText) : undefined);
-    const text = question?.question ?? rawText;
-    if (status === 'ok' && !text) {
+    const rawText = (doneText ?? whole.at(-1) ?? partial.join('')).trimEnd();
+    const parsed = this.config.onQuestion && status === 'ok' ? splitQuestion(rawText) : undefined;
+    const question = nativeQuestion ?? parsed?.question;
+    const text = question ? [parsed?.body ?? rawText, question.question].filter(Boolean).join('\n\n') : rawText;
+    if (status === 'ok' && !text.trim()) {
       status = 'error';
       error = `${adapter.displayName} returned an empty answer`;
     }

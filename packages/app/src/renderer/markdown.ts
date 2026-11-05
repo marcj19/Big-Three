@@ -56,7 +56,14 @@ export function parseInline(text: string): Inline[] {
 /** Repairs escaped table borders and wrapped links pasted from another chat, outside code fences. */
 export function normalizeChatMarkdown(text: string): string {
   let fence: string | undefined;
-  return text.replace(/\r\n?/g, '\n').split('\n').map((line) => {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  const first = lines.findIndex((line) => line.trim());
+  const opening = lines[first] ?? '';
+  // A single pipe glued to an opening sentence is stray markup unless a table divider follows.
+  if (/^\|[\p{L}*][^|]*\s[^|]*$/u.test(opening) && !/^\s*\\?\|?\s*:?-+:?\s*\|?\s*$/.test(lines[first + 1] ?? '')) {
+    lines[first] = opening.slice(1);
+  }
+  return lines.map((line) => {
     const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
     if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length && /^\s{0,3}(?:`+|~+)\s*$/.test(line)) fence = undefined; return line; }
     if (fence || /^ {4}|^\t/.test(line)) return line;

@@ -99,14 +99,14 @@ export abstract class CliAdapter implements Adapter {
   }
 
   /** Runs a short CLI command and returns its stdout lines and exit code (null if it could not start). */
-  protected async capture(args: string[]): Promise<{ lines: string[]; code: number | null }> {
+  protected async capture(args: string[]): Promise<{ lines: string[]; code: number | null; stderr?: string }> {
     const lines: string[] = [];
     try {
       const command = await this.command();
       for await (const line of runProcess({ command, args, stdin: '', cwd: process.cwd(), env: this.env(), timeoutMs: 20_000 })) lines.push(line);
       return { lines, code: 0 };
     } catch (err) {
-      return { lines, code: err instanceof CliExitError ? err.code : null };
+      return err instanceof CliExitError ? { lines, code: err.code, stderr: err.stderrTail } : { lines, code: null };
     }
   }
 

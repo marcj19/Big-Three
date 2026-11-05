@@ -40,7 +40,7 @@ export function buildPrompt(input: PromptInput): { systemPrompt: string; prompt:
   }
   if (input.role) lines.push(input.role);
   if (input.interactive) lines.push(
-    'If you need a decision or missing information before continuing, pause and make your entire final response one block: <aio-question>{"question":"Your question","options":["Option 1","Option 2"]}</aio-question>. Options are optional. The app will show a reply field and resume this task after the user answers. Use it only when a decision is needed and ask before making the affected changes. Do not wrap the block in a Markdown fence.',
+    'If you need a decision or missing information before continuing, pause. Write any progress summary in Markdown, then put this block on its own line at the very end: <aio-question>{"question":"Your question","options":["Option 1","Option 2"]}</aio-question>. Options are optional. The app will show a reply field and resume after the user answers. Use it only when a decision is needed and ask before making the affected changes. Do not escape the tags or put them in a Markdown fence.',
     'If you start a local project preview and verify that it is running, include its exact loopback URL and port in your reply.',
   );
 

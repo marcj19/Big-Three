@@ -26,13 +26,15 @@ describe('live project runs', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     try {
       const url = 'http://127.0.0.1:' + (server.address() as AddressInfo).port + '/';
+      const summary = '|Pronto — **interface revisada**.\n\n#### O que mudou\n\n- Layout da navegação.';
+      const savedReply = summary + '\n\nQual tema?';
       const claude = stub('claude', (request) => request.prompt.includes('Escuro') ? [
         { type: 'preview', url },
         { type: 'done', status: 'ok', text: 'Prévia pronta: ' + url },
       ] : [
         { type: 'subagent', agentId: 'layout', label: 'Revisar layout', status: 'running' },
         { type: 'subagent', agentId: 'layout', label: 'Revisar layout', status: 'done' },
-        { type: 'done', status: 'ok', text: '<aio-question>{"question":"Qual tema?","options":["Claro","Escuro"]}</aio-question>' },
+        { type: 'done', status: 'ok', text: summary + '\n\n\\<aio-question>{"question":"Qual tema?","options":["Claro","Escuro"]}\\</aio-question>' },
       ]);
       const { app, events, workdir, done } = await makeApp({ adapters: { claude }, confirmAccess: async () => true });
       const conv = await app.createConversation({ cwd: workdir });
@@ -41,7 +43,7 @@ describe('live project runs', () => {
       expect(request).toMatchObject({ runId, question: { provider: 'claude', question: 'Qual tema?', options: ['Claro', 'Escuro'] } });
       expect(events[0]).toMatchObject({ type: 'transcript', runId });
       expect(events.some((event) => event.type === 'run_done')).toBe(false);
-      expect((await app.getConversation(conv.id)).messages.map((message) => message.text)).toEqual(['Implemente a interface', 'Qual tema?']);
+      expect((await app.getConversation(conv.id)).messages.map((message) => message.text)).toEqual(['Implemente a interface', savedReply]);
       expect((await app.runHistory(conv.id))[0]?.entries).toEqual(expect.arrayContaining([
         expect.objectContaining({ kind: 'subagent', label: 'Revisar layout', status: 'done' }),
         expect.objectContaining({ kind: 'question', status: 'running' }),
@@ -52,7 +54,7 @@ describe('live project runs', () => {
       expect((await done(conv.id)).outcome.status).toBe('ok');
       expect(claude.requests).toHaveLength(2);
       expect(claude.requests[1]?.access).toBe('edit');
-      expect((await app.getConversation(conv.id)).messages.map((message) => message.text)).toEqual(['Implemente a interface', 'Qual tema?', 'Escuro', 'Prévia pronta: ' + url]);
+      expect((await app.getConversation(conv.id)).messages.map((message) => message.text)).toEqual(['Implemente a interface', savedReply, 'Escuro', 'Prévia pronta: ' + url]);
       expect(events.filter((event) => event.type === 'project_preview')).toEqual([{ type: 'project_preview', runId, conversationId: conv.id, url }]);
       expect(events.findIndex((event) => event.type === 'project_preview')).toBeLessThan(events.findIndex((event) => event.type === 'run_done'));
       expect((await app.runHistory(conv.id))[0]?.previewUrl).toBe(url);

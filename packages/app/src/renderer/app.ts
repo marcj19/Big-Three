@@ -12,6 +12,7 @@ import { openDialog, toast } from './ui.js';
 import { initOffice, officeEl, onOfficeEvent, startOfficeRun } from './office.js';
 import { harnessEl, initHarness, onHarnessEvent, openBrowser, openProjectPreview, renderHarness, startHarnessRun, togglePanel, loadHarnessConversation } from './harness.js';
 import { toolLabel } from '../shared/work-trace.js';
+import { onUpdate } from './updates.js';
 
 loadAppearance();
 installIcons();
@@ -215,7 +216,7 @@ async function createConversationFlow(): Promise<boolean> {
 let starting: { conversationId: string; events: AppEvent[] } | undefined;
 
 async function send(): Promise<void> {
-  if (state.run || state.sending) return;
+  if (state.run || state.sending || state.accessChanging) return;
   const text = promptEl.value.trim();
   if (!text) return void promptEl.focus();
   state.sending = true;
@@ -255,6 +256,7 @@ async function send(): Promise<void> {
 // ---------- events from the main process ----------
 
 function onAppEvent(ev: AppEvent): void {
+  if (ev.type === 'update') return onUpdate(ev.state);
   if ('runId' in ev && starting?.conversationId === ev.conversationId) {
     starting.events.push(ev);
     return;
@@ -376,6 +378,7 @@ renderTopbar();
 renderMessages();
 renderComposer();
 onEvent(onAppEvent);
+void api.update().then(onUpdate).catch(() => {});
 void Promise.all([refreshProviders(), refreshConnections(), refreshConversations(), refreshUsage()])
   .then(async () => {
     const first = state.conversations[0];

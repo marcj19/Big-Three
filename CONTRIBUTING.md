@@ -2,6 +2,15 @@
 
 Thanks for wanting to help. Bug reports, fixes, translations and ideas are all welcome.
 
+## Releasing the Windows installer
+
+On Windows x64, run `npm ci` and `npm run package:installer`. The setup file, blockmap, and `latest.yml` are generated
+in `dist/installer`. Keep the update manifest and its matching installer in the same GitHub release.
+
+To publish a stable release, set the same new version in the root and app package manifests and update the lockfile.
+After that commit is on the remote, push its matching version tag (for example `v0.2.0`). The Windows release workflow
+validates the tag, builds the installer, and publishes its update files. Installed copies check GitHub Releases on startup.
+
 ## Set up
 
 ```bash

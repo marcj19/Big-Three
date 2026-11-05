@@ -18,6 +18,8 @@ import type {
   StartRun,
   UsageView,
   AccountQuota,
+  UpdateCommand,
+  UpdateState,
 } from '../shared/api.js';
 import { ConnectionService } from './connections.js';
 import { ConversationStore } from './conversations.js';
@@ -47,6 +49,7 @@ export interface AppServiceOptions {
   peerEntry?: string;
   timeoutMs?: number;
   browser?: { state(): BrowserState; navigate(url: string): Promise<void>; command(command: 'back' | 'forward' | 'reload' | 'stop'): void; bounds(bounds: BrowserBounds): void };
+  updates?: { state(): UpdateState; perform(command: UpdateCommand): Promise<UpdateState> };
 }
 
 const providerId = z.enum(['claude', 'gemini', 'codex']);
@@ -72,7 +75,7 @@ const runSchema = z.object({
     z.object({ kind: z.literal('review'), author: providerId, reviewer: providerId }),
     z.object({ kind: z.literal('plan'), planner: providerId, executor: providerId, reviewer: providerId.optional(), executorAccess: access }),
     z.object({ kind: z.literal('debate'), participants: z.array(providerId).min(2).max(3), rounds: z.number().int().min(1).max(4).optional(), judge: providerId.optional() }),
-    z.object({ kind: z.literal('lead'), lead: choiceSchema, access, team: z.array(choiceSchema).max(2), fallback: z.boolean() }),
+    z.object({ kind: z.literal('lead'), lead: choiceSchema, access, team: z.array(choiceSchema).max(2), fallback: z.boolean(), consultTeam: z.boolean().optional() }),
     z.object({ kind: z.literal('flow'), steps: z.array(stepSchema).min(1).max(8), fallback: z.boolean() }),
   ]),
   connections: z.array(z.string()).max(20),
@@ -114,6 +117,8 @@ export class AppService implements Api {
   private readonly runs: RunManager;
   private readonly journal: RunJournal;
   private readonly logins = new Map<ProviderId, AbortController>();
+  private readonly conversationAccess = new Map<string, { cwd: string; level: Access }>();
+  private readonly accessRequests = new Set<string>();
   private quotaRead?: Promise<AccountQuota[]>;
   private quotaCache?: { at: number; value: AccountQuota[] };
 
@@ -137,6 +142,16 @@ export class AppService implements Api {
 
   private emit(event: AppEvent): void {
     this.options.emit?.(event);
+  }
+
+  async update(raw?: UpdateCommand): Promise<UpdateState> {
+    const command = z.enum(['check', 'download', 'install']).optional().parse(raw);
+    const updates = this.options.updates;
+    if (!updates) return { phase: 'unavailable' };
+    if (command === 'install' && (this.runs.isBusy() || this.accessRequests.size)) {
+      throw new Error('Aguarde a tarefa terminar antes de instalar a atualização.');
+    }
+    return command ? updates.perform(command) : updates.state();
   }
 
   async workspaceDirectory(conversationId: string, relativePath = '') {
@@ -246,21 +261,56 @@ export class AppService implements Api {
     return this.store.create({ cwd, title: input.title });
   }
 
-  async getConversation(id: string): Promise<{ meta: ConversationMeta; messages: MessageView[] }> {
-    return { meta: await this.store.get(id), messages: await this.store.messages(id) };
+  async getConversation(id: string): Promise<{ meta: ConversationMeta; messages: MessageView[]; access: Access }> {
+    const meta = await this.store.get(id);
+    return { meta, messages: await this.store.messages(id), access: this.accessFor(meta) };
+  }
+
+  private accessFor(meta: ConversationMeta): Access {
+    const grant = this.conversationAccess.get(meta.id);
+    return grant?.cwd === meta.cwd ? grant.level : 'read-only';
+  }
+
+  private async authorizeAccess(meta: ConversationMeta, level: Exclude<Access, 'read-only'>, summary: string): Promise<void> {
+    if (this.accessRequests.has(meta.id)) throw new Error('Já há uma confirmação de acesso pendente nesta conversa.');
+    this.accessRequests.add(meta.id);
+    try {
+      const ok = await this.options.confirmAccess?.({ access: level, cwd: meta.cwd, summary });
+      if (!ok) throw new Error('Write access was not confirmed, so nothing was started');
+      this.conversationAccess.set(meta.id, { cwd: meta.cwd, level });
+    } finally {
+      this.accessRequests.delete(meta.id);
+    }
+  }
+
+  async setConversationAccess(id: string, requested: Access): Promise<Access> {
+    const level = access.parse(requested);
+    const meta = await this.store.get(id);
+    if (this.runs.isBusy(id)) throw new Error('Altere o acesso depois que a execução terminar.');
+    if (this.accessRequests.has(id)) throw new Error('Já há uma confirmação de acesso pendente nesta conversa.');
+    if (level === 'read-only') this.conversationAccess.delete(id);
+    else if (RANK[level] > RANK[this.accessFor(meta)]) {
+      await this.authorizeAccess(meta, level, meta.title);
+    } else {
+      this.conversationAccess.set(id, { cwd: meta.cwd, level });
+    }
+    return level;
   }
   renameConversation(id: string, title: string): Promise<void> {
     return this.store.rename(id, title);
   }
   async deleteConversation(id: string): Promise<void> {
     if (this.runs.isBusy(id)) throw new Error('Cancel the running task first');
+    if (this.accessRequests.has(id)) throw new Error('Feche a confirmação de acesso antes de apagar a conversa.');
     await this.store.remove(id);
+    this.conversationAccess.delete(id);
     await this.journal.removeConversation(id);
   }
 
   async startRun(raw: StartRun): Promise<{ runId: string }> {
     const input = runSchema.parse(raw) as StartRun;
     const meta = await this.store.get(input.conversationId);
+    if (this.runs.isBusy(meta.id)) throw new Error('This conversation is already running. Wait for it or cancel it.');
     if (!(await stat(meta.cwd).then((s) => s.isDirectory(), () => false))) throw new Error('The conversation folder no longer exists');
 
     const missing = providersOf(input.spec).filter((p) => !this.adapters[p]);
@@ -274,20 +324,17 @@ export class AppService implements Api {
       if (problem) throw new Error(problem);
     }
     const level = writeAccess(input.spec);
-    if (level !== 'read-only') {
+    if (this.accessRequests.has(meta.id)) throw new Error('Aguarde a confirmação de acesso desta conversa.');
+    if (level !== 'read-only' && RANK[level] > RANK[this.accessFor(meta)]) {
       // Asked here, in the main process, because the window is a web page and could claim the person said yes.
-      const ok = await this.options.confirmAccess?.({
-        access: level,
-        cwd: meta.cwd,
-        summary:
+      await this.authorizeAccess(meta, level,
           input.spec.kind === 'plan'
             ? `${input.spec.executor} will carry out the plan`
             : input.spec.kind === 'flow'
               ? `${input.spec.steps.filter((s) => s.kind === 'execute').map((s) => s.provider).join(', ')} will carry out step(s) that change files`
-              : `${providersOf(input.spec).join(', ')} may act`,
-      });
-      if (!ok) throw new Error('Write access was not confirmed, so nothing was started');
+              : `${providersOf(input.spec).join(', ')} may act`);
     }
+    if (this.options.updates?.state().phase === 'installing') throw new Error('O Big Three está reiniciando para atualizar.');
     return { runId: this.runs.start(input, meta.cwd, level !== 'read-only') };
   }
 

@@ -26,9 +26,9 @@ export interface TeamPick extends Pick {
 export interface Config {
   /** The model you talk to. */
   lead: LeadPick;
-  access: Access;
   /** Colleagues the lead may consult on its own, each on the model chosen here. */
   team: Record<ProviderId, TeamPick>;
+  consultTeam: boolean;
   /** Another model takes over if the lead runs out of quota (never while it may change files). */
   fallback: boolean;
   connections: string[];
@@ -58,10 +58,11 @@ export const state = {
   models: {} as Partial<Record<ProviderId, ModelOption[]>>,
   connections: [] as ConnectionView[],
   conversations: [] as ConversationMeta[],
-  current: undefined as { meta: ConversationMeta; messages: MessageView[] } | undefined,
+  current: undefined as { meta: ConversationMeta; messages: MessageView[]; access: Access } | undefined,
   run: undefined as RunState | undefined,
   pending: undefined as { conversationId: string; message: MessageView; lead: ProviderId } | undefined,
   sending: false,
+  accessChanging: false,
   usage: {} as Record<string, UsageView>,
   /** Plan limits per model (percent used and renewal), as far as each CLI lets the app read them. */
   quotas: [] as AccountQuota[],
@@ -69,14 +70,15 @@ export const state = {
   sidebarCollapsed: false,
   config: {
     lead: { provider: 'claude' },
-    access: 'read-only',
     team: { claude: { enabled: true }, gemini: { enabled: true }, codex: { enabled: true } },
+    consultTeam: false,
     fallback: true,
     connections: [],
   } as Config,
 };
 
 export const provider = (id: ProviderId): ProviderStatus | undefined => state.providers.find((p) => p.id === id);
+export const conversationAccess = (): Access => state.current?.access ?? 'read-only';
 export const usable = (id: ProviderId): boolean => provider(id)?.available === true;
 /** Installed and not known to be signed out. */
 export const ready = (id: ProviderId): boolean => usable(id) && provider(id)?.signedIn !== false;
@@ -99,8 +101,8 @@ export function loadConfig(): void {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Partial<Config> | null;
     if (saved?.lead?.provider && PROVIDERS.includes(saved.lead.provider)) state.config.lead = { ...saved.lead };
     if (saved?.team) for (const p of PROVIDERS) if (saved.team[p]) state.config.team[p] = { ...state.config.team[p], ...saved.team[p] };
+    if (typeof saved?.consultTeam === 'boolean') state.config.consultTeam = saved.consultTeam;
     if (typeof saved?.fallback === 'boolean') state.config.fallback = saved.fallback;
-    // Write access is never remembered between sessions: it has to be chosen again each time.
   } catch {
     /* storage unavailable: defaults are fine */
   }
@@ -108,8 +110,8 @@ export function loadConfig(): void {
 
 export function saveConfig(): void {
   try {
-    const { lead, team, fallback } = state.config;
-    localStorage.setItem(KEY, JSON.stringify({ lead, team, fallback }));
+    const { lead, team, consultTeam, fallback } = state.config;
+    localStorage.setItem(KEY, JSON.stringify({ lead, team, consultTeam, fallback }));
   } catch {
     /* ignore */
   }
@@ -124,8 +126,9 @@ export function buildSpec(c: Config): RunSpec {
   return {
     kind: 'lead',
     lead: choice(c.lead.provider, c.lead),
-    access: c.access,
+    access: conversationAccess(),
     team: teamMembers(c).map((id) => choice(id, c.team[id])),
+    consultTeam: c.consultTeam,
     fallback: c.fallback,
   };
 }

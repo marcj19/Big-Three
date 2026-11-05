@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeChatMarkdown, parseInline, parseMarkdown, safeLink } from '../src/renderer/markdown.js';
 import { titleFrom } from '../src/services/conversations.js';
+import { splitQuestion, visibleReply } from '@aio/room/question';
 
 const kinds = (text: string) => parseMarkdown(text).map((b) => b.kind);
 
@@ -37,6 +38,31 @@ describe('inline Markdown', () => {
 });
 
 describe('Markdown blocks', () => {
+  it('keeps a formatted summary when an escaped question follows it and hides the protocol while streaming', () => {
+    const summary = '|Pronto — **rebrand completo**.\n\n#### O que mudei\n\n- Atualizei a navegação.\n  - Realcei o item ativo.\n\n> A prévia está em [localhost](http://localhost:3000 "Prévia").';
+    const question = '\\<aio-question>{"question":"Qual o próximo bloco?","options":["Camada web","App desktop"]}\\</aio-question>';
+    expect(visibleReply(summary + '\n\n\\<aio-que')).toBe(summary);
+    expect(visibleReply(summary + '\n\n' + question)).toBe(summary);
+    expect(splitQuestion(summary + '\n\n' + question)).toEqual({
+      body: summary, question: { question: 'Qual o próximo bloco?', options: ['Camada web', 'App desktop'] },
+    });
+    const formatted = parseMarkdown(summary);
+    expect(formatted.map((block) => block.kind)).toEqual(['paragraph', 'heading', 'list', 'quote']);
+    expect(formatted[0]).toMatchObject({ inline: [{ kind: 'text', value: 'Pronto — ' }, { kind: 'bold', value: 'rebrand completo' }, { kind: 'text', value: '.' }] });
+    expect(formatted[2]).toMatchObject({ items: [{ blocks: [{ kind: 'paragraph' }, { kind: 'list' }] }] });
+    expect(kinds('|Título da tabela\n|---|\n|Valor')).toEqual(['table']);
+  });
+
+  it('keeps question markup literal inside code and still recognizes a standalone question', () => {
+    const question = '<aio-question>{"question":"Qual o próximo bloco?"}</aio-question>';
+    const fence = String.fromCharCode(96).repeat(3);
+    const code = fence + 'xml\n' + question + '\n' + fence;
+    expect(splitQuestion(code)).toBeUndefined();
+    expect(splitQuestion('    ' + question)).toBeUndefined();
+    expect(visibleReply(code)).toBe(code);
+    expect(splitQuestion(question)).toMatchObject({ body: '', question: { question: 'Qual o próximo bloco?' } });
+    expect(splitQuestion(code + '\n\n' + question)?.body).toBe(code);
+  });
   it('splits paragraphs, headings, lists, quotes and code', () => {
     const text = ['# Title', '', 'Intro line', 'second line', '', '- one', '- **two**', '', '1. first', '2. second', '', '> quoted', '', '```ts', 'const x = 1;', '```', '', 'Done'].join('\n');
     expect(kinds(text)).toEqual(['heading', 'paragraph', 'list', 'list', 'quote', 'code', 'paragraph']);

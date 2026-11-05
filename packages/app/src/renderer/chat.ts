@@ -1,7 +1,9 @@
 import type { MessageView, PendingQuestion, ProviderId, StepKind } from '../shared/api.js';
+import { splitQuestion, visibleReply } from '@aio/room/question';
 import { api } from './bridge.js';
 import { ctx } from './ctx.js';
 import { clear, formatTime, h, renderRichText, syncChildren } from './dom.js';
+import { normalizeChatMarkdown } from './markdown.js';
 import { icon, providerMark } from './icons.js';
 import { NAMES, PROVIDERS, ready, saveConfig, STARTERS, state, type LiveTurn } from './state.js';
 import { toast } from './ui.js';
@@ -118,6 +120,12 @@ function avatar(author: MessageView['author']): HTMLElement | '' {
 
 function messageNode(m: MessageView): HTMLElement {
   const name = m.author === 'user' ? 'Você' : m.author === 'system' ? 'Aviso' : NAMES[m.author];
+  const assistant = m.author !== 'user' && m.author !== 'system';
+  const parsed = assistant ? splitQuestion(m.text) : undefined;
+  const options = parsed?.question.options ?? [];
+  const readableText = parsed
+    ? [parsed.body, parsed.question.question, options.map((option, index) => [index + 1, option].join('. ')).join('\n')].filter(Boolean).join('\n\n')
+    : m.text;
   return h(
     'article',
     { class: `msg ${m.author}`, 'aria-label': `${name}, ${formatTime(m.at)}`, title: formatTime(m.at) },
@@ -127,8 +135,9 @@ function messageNode(m: MessageView): HTMLElement {
       { class: 'bubble' },
       // Your own messages carry no name, like in Messages; the time is in the tooltip and the accessible name.
       m.author === 'system' || m.author === 'user' ? '' : h('div', { class: 'who' }, name, h('span', { class: 'time' }, formatTime(m.at))),
-      h('div', { class: 'text' }, renderRichText(m.text, copy)),
-      m.author !== 'user' && m.author !== 'system' ? h('div', { class: 'message-actions' }, h('button', { class: 'btn text', type: 'button', onClick: () => void copy(m.text) }, 'Copiar resposta')) : '',
+      h('div', { class: 'text' }, renderRichText(parsed?.body ?? m.text, copy),
+        parsed ? h('div', { class: 'body' }, renderRichText(parsed.question.question, copy), options.length ? h('ol', {}, ...options.map((option) => h('li', {}, option))) : '') : ''),
+      assistant ? h('div', { class: 'message-actions' }, h('button', { class: 'btn text', type: 'button', onClick: () => void copy(normalizeChatMarkdown(readableText)) }, 'Copiar resposta')) : '',
     ),
   );
 }
@@ -146,9 +155,7 @@ function updateLive(el: HTMLElement, t: LiveTurn): void {
   const text = el.querySelector<HTMLElement>('.text')!;
   const tools = el.querySelector<HTMLElement>('.tools')!;
   el.querySelector<HTMLElement>('[data-role=note]')!.textContent = t.note ?? 'escrevendo…';
-  const marker = '<aio-question>';
-  const clean = t.text.trimStart();
-  const response = clean.startsWith(marker) || marker.startsWith(clean) ? '' : t.text;
+  const response = visibleReply(t.text);
   if (response !== (text.dataset.shown ?? '')) {
     text.dataset.shown = response;
     text.classList.toggle('empty', !response);

@@ -40,8 +40,14 @@ export class GeminiAdapter extends CliAdapter {
   readonly supportsResume = true;
   readonly supportsMcp = false;
   protected readonly binaryName = 'agy';
-  protected readonly installHint = 'Install the Antigravity CLI (agy) and sign in with your Google account.';
-  protected override readonly extraSearchDirs = [path.join(os.homedir(), '.gemini', 'bin')];
+  protected readonly installHint = 'Instale a CLI do Antigravity (comando agy) e entre com sua conta Google.';
+  protected override readonly extraSearchDirs = [
+    ...(process.platform === 'win32' ? [
+      path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'), 'agy', 'bin'),
+      ...(process.env.ProgramFiles ? [path.join(process.env.ProgramFiles, 'Google', 'antigravity-cli')] : []),
+    ] : []),
+    path.join(os.homedir(), '.gemini', 'bin'),
+  ];
   protected override readonly loginHelp = 'Open a terminal, run `agy` once and sign in with your Google account (or sign in through the Antigravity IDE).';
 
   /**
@@ -55,9 +61,13 @@ export class GeminiAdapter extends CliAdapter {
 
   protected override async checkAuth(): Promise<AuthStatus> {
     // `agy models` needs a valid session but does not run a model, so it costs no quota.
-    const { code } = await this.capture(['models']);
-    if (code === null) return { signedIn: 'unknown' };
-    return code === 0 ? { signedIn: true, detail: 'google' } : { signedIn: false };
+    const { code, lines, stderr } = await this.capture(['models']);
+    if (code === 0) return { signedIn: true, detail: 'google' };
+    const output = [...lines, stderr ?? ''].join('\n');
+    if (/not (?:logged|signed) in|(?:authentication|login|sign-in) (?:is )?required|please (?:log|sign) in|\bunauthorized\b|\b401\b/i.test(output)) {
+      return { signedIn: false };
+    }
+    return { signedIn: 'unknown' };
   }
 
   protected build(req: RunRequest): BuiltInvocation {

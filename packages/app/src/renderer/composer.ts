@@ -6,7 +6,8 @@ import { clear, h } from './dom.js';
 import { engineMark, icon, providerMark } from './icons.js';
 import { segmented } from './seg.js';
 import { renderOffice } from './office.js';
-import { ACCESS_META, canLead, modelLabel, NAMES, PROVIDERS, provider, ready, saveConfig, state, teamMembers, usable, type Pick } from './state.js';
+import { ACCESS_META, canLead, conversationAccess, modelLabel, NAMES, PROVIDERS, provider, ready, saveConfig, state, teamMembers, usable, type Pick } from './state.js';
+import { toast } from './ui.js';
 
 const CUSTOM = '__custom__';
 const EFFORT_LABEL: Record<string, string> = { low: 'Baixo', medium: 'Médio', high: 'Alto', xhigh: 'Muito alto', max: 'Máximo' };
@@ -55,7 +56,7 @@ function updateSend(): void {
   }
   sendBtn.classList.toggle('stop', busy);
   const visible = busy || hasText;
-  sendBtn.disabled = state.sending && !busy;
+  sendBtn.disabled = (state.sending || state.accessChanging) && !busy;
   sendBtn.classList.toggle('idle', !visible);
   sendBtn.tabIndex = visible ? 0 : -1;
   sendBtn.setAttribute('aria-hidden', String(!visible));
@@ -167,10 +168,11 @@ function modelControls(p: ProviderId, holder: Pick, label: string, onChange: () 
         'aria-label': `${label}: nome do modelo de ${NAMES[p]}`,
         spellcheck: 'false',
         autocomplete: 'off',
-        onChange: (e: Event) => {
+        maxlength: 100,
+        onInput: (e: Event) => {
           holder.model = (e.target as HTMLInputElement).value.trim();
           holder.customModel = true;
-          onChange();
+          saveConfig();
         },
       }),
     );
@@ -252,7 +254,6 @@ function modelPop(): HTMLElement {
         c.lead = { provider: p };
         saveConfig();
         renderComposer();
-        refreshPop();
       }),
     );
   }
@@ -262,29 +263,43 @@ function modelPop(): HTMLElement {
     { class: 'pop-body' },
     h('p', { class: 'pop-title' }, 'Com quem você conversa'),
     row,
-    h('div', { class: 'controls' }, ...modelControls(c.lead.provider, c.lead, 'Líder', () => { saveConfig(); renderComposer(); refreshPop(); })),
+    h('div', { class: 'controls' }, ...modelControls(c.lead.provider, c.lead, 'Líder', () => { saveConfig(); renderComposer(); })),
     switchRow('Trocar de modelo se atingir o limite', 'Só quando o líder está em somente leitura. Se pode editar arquivos, ele não é trocado.', () => c.fallback, (v) => (c.fallback = v)),
   );
 }
 
 let accessSeg: ReturnType<typeof segmented<Access>> | undefined;
+async function changeAccess(level: Access): Promise<void> {
+  if (level === conversationAccess() || state.accessChanging || state.sending || (state.run && state.run.conversationId === state.current?.meta.id)) return;
+  state.accessChanging = true;
+  renderComposer();
+  try {
+    if (!state.current && !(await ctx.newConversation())) return;
+    const id = state.current!.meta.id;
+    const granted = await api.setConversationAccess(id, level);
+    if (state.current?.meta.id === id) state.current.access = granted;
+  } catch (err) {
+    const message = (err as Error).message;
+    toast(message.includes('not confirmed') ? 'A alteração de acesso não foi confirmada.' : message, 'error');
+  } finally {
+    state.accessChanging = false;
+    renderComposer();
+  }
+}
+
 function accessPop(): HTMLElement {
-  const c = state.config;
+  const level = conversationAccess();
   accessSeg ??= segmented<Access>({
     className: 'access',
     label: 'O que o líder pode fazer',
-    value: c.access,
+    value: level,
     items: (['read-only', 'edit', 'full'] as const).map((level) => ({ value: level, label: ACCESS_META[level].short, icon: ACCESS_META[level].icon, title: ACCESS_META[level].hint })),
-    onChange: (v) => {
-      c.access = v;
-      accessSeg!.set(v);
-      renderComposer();
-      const hint = pop?.querySelector('.access-hint');
-      if (hint) hint.textContent = ACCESS_META[v].hint;
-    },
+    onChange: (v) => void changeAccess(v),
   });
-  accessSeg.set(c.access);
-  return h('div', { class: 'pop-body' }, h('p', { class: 'pop-title' }, 'O que o líder pode fazer'), accessSeg.el, h('p', { class: 'access-hint muted small' }, ACCESS_META[c.access].hint), h('p', { class: 'muted small' }, 'Mudar arquivos sempre pede a sua confirmação antes de começar.'));
+  accessSeg.set(level);
+  return h('div', { class: 'pop-body' }, h('p', { class: 'pop-title' }, 'Acesso nesta conversa'), accessSeg.el,
+    h('p', { class: 'muted small' }, ACCESS_META[level].hint),
+    h('p', { class: 'muted small' }, 'Confirme uma vez ao ampliar o acesso. A escolha vale nesta conversa até você fechar o app.'));
 }
 
 function teamPop(): HTMLElement {
@@ -295,12 +310,16 @@ function teamPop(): HTMLElement {
     h(
       'p',
       { class: 'muted small' },
-      `${NAMES[lead]} decide sozinho se precisa consultar um colega, ou você pede no chat ("peça ao Gemini para revisar"). Colegas só leem e respondem; quem altera arquivos é o líder.`,
+      'Os modelos e esforços escolhidos aqui são salvos automaticamente. Colegas dão pareceres em somente leitura.',
     ),
   );
-  if (!canLead(lead)) {
-    body.append(h('div', { class: 'warn-line info', role: 'note' }, icon('info', 'sm'), h('span', {}, `${NAMES[lead]} ainda não consegue chamar colegas. Escolha Claude ou Codex como líder para usar a equipe; eles podem consultar o ${NAMES[lead]}.`)));
-  }
+  body.append(switchRow('Consultar equipe automaticamente', 'Os colegas selecionados dão um parecer antes da resposta do líder.', () => c.consultTeam, (enabled) => {
+    c.consultTeam = enabled;
+    renderComposer();
+  }));
+  if (!c.consultTeam) body.append(h('p', { class: 'muted small' }, canLead(lead)
+    ? `${NAMES[lead]} consulta os colegas quando precisa de uma segunda opinião.`
+    : 'Ative a consulta automática para usar a equipe com este líder.'));
   for (const p of PROVIDERS.filter((x) => x !== lead)) {
     const t = c.team[p];
     const off = !ready(p);
@@ -313,9 +332,9 @@ function teamPop(): HTMLElement {
         h('b', {}, NAMES[p]),
         off ? h('span', { class: 'muted small' }, usable(p) ? 'não conectado' : 'não instalado') : '',
       ),
-      switchRow(`Consultar o ${NAMES[p]}`, 'O líder pode fazer perguntas a ele.', () => t.enabled, (v) => { t.enabled = v; renderComposer(); refreshPop(); }, off || !canLead(lead)),
+      switchRow(`Consultar o ${NAMES[p]}`, t.enabled ? `Modelo selecionado: ${modelLabel(p, t)}` : 'Adicione este colega à equipe.', () => t.enabled, (v) => { t.enabled = v; renderComposer(); }, off),
     );
-    if (t.enabled && !off) block.append(h('div', { class: 'controls' }, ...modelControls(p, t, NAMES[p], () => { saveConfig(); renderComposer(); refreshPop(); })));
+    if (t.enabled && !off) block.append(h('div', { class: 'controls' }, ...modelControls(p, t, NAMES[p], () => { saveConfig(); renderComposer(); })));
     body.append(block);
   }
   return body;
@@ -337,7 +356,6 @@ function dbPop(): HTMLElement {
           onClick: () => {
             c.connections = on ? c.connections.filter((n) => n !== x.name) : [...c.connections, x.name];
             renderComposer();
-            refreshPop();
           },
         },
         h('span', { class: 'tile' }, engineMark(x.engine)),
@@ -356,31 +374,35 @@ function renderChips(): void {
   const modelContent: (Node | string)[] = [h('span', { class: 'avatar xs' }, providerMark(lead)), `${NAMES[lead]}${parts.length ? ` · ${parts.join(' · ')}` : ''}`];
 
   const members = teamMembers(c);
-  const teamText = !canLead(lead) ? 'Equipe indisponível' : members.length ? `Equipe: ${members.map((p) => NAMES[p]).join(', ')}` : 'Sem equipe';
+  const access = conversationAccess();
+  const teamAvailable = c.consultTeam || canLead(lead);
+  const teamText = members.length ? `${c.consultTeam ? 'Equipe automática' : 'Equipe'}: ${members.map((p) => NAMES[p]).join(', ')}` : 'Sem equipe';
 
-  clear(chipsEl);
-  chipsEl.append(
+  for (const child of Array.from(chipsEl.children)) if (child !== pop) child.remove();
+  const chips = [
     chip('model', modelContent, modelPop, 'Modelo'),
-    chip('access', [icon(ACCESS_META[c.access].icon, 'sm'), ACCESS_META[c.access].label], accessPop, 'Acesso', c.access === 'edit' ? 'warn' : c.access === 'full' ? 'danger' : ''),
-    chip('team', [icon('users', 'sm'), teamText], teamPop, 'Equipe', !canLead(lead) || !members.length ? 'muted-chip' : ''),
-  );
+    chip('access', [icon(ACCESS_META[access].icon, 'sm'), ACCESS_META[access].label], accessPop, 'Acesso', access === 'edit' ? 'warn' : access === 'full' ? 'danger' : ''),
+    chip('team', [icon('users', 'sm'), teamText], teamPop, 'Equipe', !teamAvailable || !members.length ? 'muted-chip' : ''),
+  ];
   const dbs = state.connections.filter((x) => x.hasPassword);
   if (dbs.length) {
     const on = c.connections;
-    chipsEl.append(chip('db', [icon('database', 'sm'), on.length ? `Banco: ${on.join(', ')}` : 'Banco'], dbPop, 'Bancos de dados', on.length ? '' : 'muted-chip'));
+    chips.push(chip('db', [icon('database', 'sm'), on.length ? `Banco: ${on.join(', ')}` : 'Banco'], dbPop, 'Bancos de dados', on.length ? '' : 'muted-chip'));
   }
+  chipsEl.prepend(...chips);
 }
 
 function renderWarnings(): void {
   clear(warnEl);
   const c = state.config;
-  if (c.access !== 'read-only') {
+  const level = conversationAccess();
+  if (level !== 'read-only') {
     warnEl.append(
       h(
         'div',
-        { class: `warn-line ${c.access === 'full' ? 'danger' : 'warn'}`, role: 'note' },
+        { class: `warn-line ${level === 'full' ? 'danger' : 'warn'}`, role: 'note' },
         icon('shield', 'sm'),
-        h('span', {}, `${ACCESS_META[c.access].label}: ${ACCESS_META[c.access].hint} O app vai pedir a sua confirmação antes de começar.`),
+        h('span', {}, `${ACCESS_META[level].label} nesta conversa. ${ACCESS_META[level].hint}`),
       ),
     );
   }
@@ -396,18 +418,14 @@ export function renderComposer(): void {
   promptEl.readOnly = awaitingAnswer;
   promptEl.placeholder = awaitingAnswer ? 'Responda à pergunta no topo do chat…' : 'Pergunte ou peça qualquer coisa…';
   const open = pop ? popOwner?.dataset.fk : undefined;
-  if (pop) {
-    // keep the open popover's DOM across the re-render of the chips
-    pop.remove();
-  }
   renderChips();
   if (pop) {
-    chipsEl.append(pop);
     const anchor = open ? chipsEl.querySelector<HTMLElement>(`[data-fk="${open}"]`) : undefined;
     if (anchor) {
       popOwner = anchor;
       anchor.setAttribute('aria-expanded', 'true');
-    }
+      refreshPop();
+    } else closePop();
   }
   renderWarnings();
   updateSend();

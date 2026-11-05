@@ -8,6 +8,7 @@ import { appMark, engineMark, icon, providerMark } from './icons.js';
 import { NAMES, PROVIDERS, provider, state } from './state.js';
 import { confirmDialog, toast } from './ui.js';
 import { openQuotas } from './quotas.js';
+import { updatesButton } from './updates.js';
 import { meterOf } from './quota-format.js';
 
 export const sidebarEl = h('nav', { class: 'sidebar', 'aria-label': 'Conversas, modelos e bancos de dados' });
@@ -117,7 +118,9 @@ function modelsPanel(): HTMLElement {
       ),
     );
     if (p?.available) body.append(quotaMeters(id));
-    const note = !p ? '' : !p.available ? (p.reason ?? '') : p.signedIn === false && !p.canLogin ? 'Abra o programa uma vez no terminal e entre com a sua conta.' : '';
+    const note = !p ? '' : !p.available ? (p.reason ?? '') : p.signedIn === false && !p.canLogin
+      ? id === 'gemini' ? 'Rode agy no terminal e entre com sua conta Google.' : 'Abra o programa uma vez no terminal e entre com a sua conta.'
+      : '';
     if (note) body.append(h('p', { class: 'prov-note' }, note));
     for (const line of state.loginOutput[id] ?? []) body.append(h('p', { class: 'prov-note' }, line));
   }
@@ -186,6 +189,7 @@ export function renderSidebar(): void {
       conversationList(),
       modelsPanel(),
       databasesPanel(),
+      updatesButton(),
     );
   });
 }

@@ -21,8 +21,9 @@ nunca extrai tokens e nunca pede chaves de API.
   consulta aparece no chat como um cartão com a pergunta e a resposta.
 - **Você manda na equipe.** Escolha quais colegas podem ser consultados e com que modelo cada um responde. Os colegas só
   leem e respondem; **só o líder altera arquivos**, e apenas com o acesso que você deu.
-- **Seguro por padrão.** Os modelos começam em somente leitura. Deixar um editar arquivos ou rodar comandos pede a sua
-  confirmação numa janela nativa, toda vez.
+  Ative **Consultar equipe automaticamente** para receber os pareceres a cada tarefa antes da resposta do líder.
+- **Seguro por padrão.** Cada conversa começa em somente leitura. Confirme a ampliação de acesso uma vez. A autorização
+  vale naquela conversa até você reduzir o acesso ou fechar o app.
 - **Escolha real de modelo.** Claude (Opus, Sonnet, Haiku, versões fixas, esforço), Gemini (tudo o que a sua conta do
   Antigravity oferece, incluindo modelos Claude e GPT-OSS) e Codex (qualquer nome de modelo, esforço).
 - **Acesso a banco de dados sem expor credenciais.** Conecte PostgreSQL, MySQL ou Oracle. Os modelos podem rodar consultas
@@ -45,7 +46,7 @@ nunca extrai tokens e nunca pede chaves de API.
 
 - **Windows 10 ou 11** (desenvolvido e usado no Windows 11; macOS e Linux ainda não foram experimentados, veja
   [Suporte a plataformas](#suporte-a-plataformas)).
-- **[Node.js](https://nodejs.org) 20 ou mais novo.**
+- **[Node.js](https://nodejs.org) 20 ou mais novo** para rodar pelo código ou gerar o executável.
 - **Pelo menos uma destas CLIs, instalada e com login na sua própria conta** (quanto mais, melhor a equipe):
   - **Claude Code** (`claude`), com uma assinatura do Claude.
   - **CLI do Antigravity** (`agy`), para o Gemini, com uma conta Google.
@@ -53,7 +54,14 @@ nunca extrai tokens e nunca pede chaves de API.
 
 ## Instalar e abrir
 
-**O jeito mais fácil no Windows:** baixe o projeto (botão verde **Code**, depois **Download ZIP**, e descompacte) e dê dois
+**Instalador para Windows x64.** Baixe o arquivo **Big-Three-Setup-…-x64.exe** na página de versões e execute-o.
+O instalador cria atalhos para abrir o Big Three. Nas próximas versões, use **Atualizações** na barra lateral para baixar
+e instalar sem procurar outro arquivo. [GitHub Releases](https://github.com/marcj19/Big-Three/releases)
+
+**Versão portátil para Windows:** após `npm ci`, rode `npm run package:win` para gerar a pasta portátil em `dist`.
+Abra **Big Three.exe** dentro dela. Mantenha a pasta inteira junta, pois ela contém o Electron e as dependências do app.
+
+**Pelo código:** baixe o projeto (botão verde **Code**, depois **Download ZIP**, e descompacte) e dê dois
 cliques em **`Big-Three.cmd`**. Na primeira vez ele instala o que precisa (alguns minutos, incluindo o download único do
 Electron, cerca de 110 MB). Depois disso abre na hora.
 
@@ -155,9 +163,8 @@ modelos podem consultar.
 
 ## Como ele se mantém seguro
 
-- **Somente leitura, a menos que você diga o contrário.** Escrita é confirmada por uma janela nativa que a página não
-  consegue responder. Não é lembrada entre sessões, e um limite de uso nunca passa para outro modelo uma tarefa que pode
-  alterar arquivos.
+- **Acesso por conversa.** Uma janela nativa confirma cada ampliação de acesso. O processo principal guarda a autorização
+  da conversa enquanto o app estiver aberto. A troca de modelo por limite de uso vale apenas em somente leitura.
 - **Colegas não alteram nada.** Um modelo consultado roda só lendo e não recebe as ferramentas da sala nem as do banco, então as
   perguntas não se multiplicam.
 - **Defesa em camadas no banco:** usuário só com `SELECT` (a camada que importa), um filtro de SQL, transações somente
@@ -184,7 +191,6 @@ são bem-vindos.
 - **O Gemini pode ser consultado, mas não consulta outros nem acessa bancos.** A CLI do Antigravity ainda não tem um jeito
   limpo de acoplar ferramentas a uma única sessão, e mudar a configuração global dela sem perguntar não seria educado.
 - **O Codex não tem lista de modelos** para escolher; use *Outro…* e digite o nome de um modelo.
-- **Ainda não há instalador.** O app roda a partir da pasta do código; o empacotamento está nos planos.
 
 ## Sem vínculo oficial
 
