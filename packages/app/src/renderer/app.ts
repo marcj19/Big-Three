@@ -78,7 +78,16 @@ async function refreshConversations(): Promise<void> {
 async function refreshUsage(): Promise<void> {
   state.usage = await api.usage();
   renderSidebar();
+  void refreshQuotas();
 }
+/** Plan limits for the sidebar meters. A failed read leaves the last meters in place instead of showing an error. */
+async function refreshQuotas(): Promise<void> {
+  try {
+    state.quotas = await api.accountQuotas();
+    renderSidebar();
+  } catch { /* keep the previous meters */ }
+}
+setInterval(() => void refreshQuotas(), 5 * 60_000);
 
 async function openConversation(id: string, keepScroll = false): Promise<void> {
   try {

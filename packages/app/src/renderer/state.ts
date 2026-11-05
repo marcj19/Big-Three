@@ -1,4 +1,4 @@
-import type { Access, ConnectionView, ConversationMeta, MessageView, ModelOption, ProviderId, ProviderStatus, RunSpec, UsageView } from '../shared/api.js';
+import type { AccountQuota, Access, ConnectionView, ConversationMeta, MessageView, ModelOption, ProviderId, ProviderStatus, RunSpec, UsageView } from '../shared/api.js';
 import type { IconName } from './icons.js';
 
 export const PROVIDERS: ProviderId[] = ['claude', 'gemini', 'codex'];
@@ -56,6 +56,8 @@ export const state = {
   current: undefined as { meta: ConversationMeta; messages: MessageView[] } | undefined,
   run: undefined as RunState | undefined,
   usage: {} as Record<string, UsageView>,
+  /** Plan limits per model (percent used and renewal), as far as each CLI lets the app read them. */
+  quotas: [] as AccountQuota[],
   loginOutput: {} as Partial<Record<ProviderId, string[]>>,
   sidebarCollapsed: false,
   config: {

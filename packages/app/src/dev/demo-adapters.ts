@@ -30,6 +30,11 @@ export function demoAdapters(): Record<ProviderId, Adapter> {
             { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
           ]),
     ],
+    // Made-up plan limits so the sidebar meters can be seen without a real account (Gemini reports none, as in real life).
+    ...(id === 'claude' ? { readQuota: async () => [
+      { name: 'five_hour', usedPercent: 3, resetsAt: Date.now() + 5 * 3600_000 },
+      { name: 'seven_day', usedPercent: 89, resetsAt: Date.now() + 2.5 * 86400_000 },
+    ] } : {}),
     canLogin: id === 'claude',
     detect: async () => (opts.installed ? { available: true, version: 'demo' } : { available: false, reason: `${displayName} CLI not found. Install it and sign in.` }),
     authStatus: async () => ({ signedIn: opts.installed }),

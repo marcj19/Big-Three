@@ -3,6 +3,7 @@ import { api } from './bridge.js';
 import { ctx } from './ctx.js';
 import { h, keepFocus } from './dom.js';
 import { icon, providerMark } from './icons.js';
+import { windowLabel } from './quota-format.js';
 import { NAMES, PROVIDERS, provider, state } from './state.js';
 import { openDialog } from './ui.js';
 
@@ -11,7 +12,6 @@ const HELP = {
   claude: { url: 'https://claude.ai/settings/usage', label: 'Abrir uso do Claude', command: '/usage', terminal: 'claude' },
   gemini: { url: 'https://antigravity.google/docs/cli/commands/usage', label: 'Como consultar no Antigravity', command: '/usage', terminal: 'agy' },
 };
-const WINDOW_NAMES: Record<string, string> = { five_hour: 'Janela de 5 horas', seven_day: 'Semanal', seven_day_opus: 'Semanal · Opus', seven_day_sonnet: 'Semanal · Sonnet', overage: 'Uso extra' };
 const date = (value: number) => new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 export function openQuotas(): void {
@@ -35,7 +35,7 @@ export function openQuotas(): void {
         ...windows.map((window) => {
           const expired = window.resetsAt !== undefined && window.resetsAt <= Date.now();
           const percent = expired ? undefined : window.usedPercent;
-          const label = WINDOW_NAMES[window.name] ?? window.name;
+          const label = windowLabel(window.name);
           const value = percent === undefined ? expired ? 'Aguardando atualização' : window.status === 'rejected' ? 'Limite atingido' : window.status === 'allowed_warning' ? 'Próximo do limite' : 'Percentual não informado' : `${Math.round(percent)}% usado · ${Math.round(100 - percent)}% restante`;
           return h('div', { class: `quota-window${expired ? ' stale' : ''}` }, h('div', { class: 'quota-window-label' }, h('b', {}, label), h('span', {}, value)),
             percent !== undefined ? h('progress', { max: 100, value: percent, class: percent >= 90 ? 'high' : '', 'aria-label': `${label}: ${Math.round(percent)}% usado` }) : '',
@@ -55,6 +55,7 @@ export function openQuotas(): void {
     loading = true; error = ''; render();
     try {
       const [result, usage] = await Promise.all([api.accountQuotas(), api.usage()]);
+      state.quotas = result;
       if (!closed) { quotas = result; state.usage = usage; ctx.renderSidebar(); }
     } catch { error = 'Não foi possível atualizar. Tente novamente ou consulte a plataforma.'; }
     finally { loading = false; if (!closed) render(); }

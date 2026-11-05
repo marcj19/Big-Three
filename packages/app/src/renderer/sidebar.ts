@@ -1,3 +1,4 @@
+import type { ProviderId } from '../shared/api.js';
 import { api } from './bridge.js';
 import { openAppearance } from './appearance.js';
 import { openConnectionsDialog } from './connections.js';
@@ -7,6 +8,7 @@ import { appMark, engineMark, icon, providerMark } from './icons.js';
 import { NAMES, PROVIDERS, provider, state } from './state.js';
 import { confirmDialog, toast } from './ui.js';
 import { openQuotas } from './quotas.js';
+import { meterOf } from './quota-format.js';
 
 export const sidebarEl = h('nav', { class: 'sidebar', 'aria-label': 'Conversas, modelos e bancos de dados' });
 let modelsCollapsed = false;
@@ -114,6 +116,7 @@ function modelsPanel(): HTMLElement {
           : '',
       ),
     );
+    if (p?.available) body.append(quotaMeters(id));
     const note = !p ? '' : !p.available ? (p.reason ?? '') : p.signedIn === false && !p.canLogin ? 'Abra o programa uma vez no terminal e entre com a sua conta.' : '';
     if (note) body.append(h('p', { class: 'prov-note' }, note));
     for (const line of state.loginOutput[id] ?? []) body.append(h('p', { class: 'prov-note' }, line));
@@ -129,6 +132,19 @@ function modelsPanel(): HTMLElement {
   }
   panel.append(h('button', { class: 'btn text block', type: 'button', 'data-fk': 'open-quotas', onClick: openQuotas }, icon('plan', 'sm'), 'Limites e uso'));
   return panel;
+}
+
+/** Plan limits under a model: percent used and when the window renews. Empty when the CLI reports nothing. */
+function quotaMeters(id: ProviderId): HTMLElement | string {
+  const windows = (state.quotas.find((entry) => entry.provider === id)?.windows ?? []).filter((w) => w.usedPercent !== undefined || w.resetsAt !== undefined || w.status !== undefined).slice(0, 3);
+  if (!windows.length) return '';
+  return h('div', { class: 'qmeters', role: 'group', 'aria-label': `Limites de ${NAMES[id]}` }, ...windows.map((w) => {
+    const m = meterOf(w);
+    return h('div', { class: 'qm' },
+      h('div', { class: 'qm-top' }, h('span', {}, m.label), h('span', { class: `qm-val${m.high ? ' high' : ''}` }, m.text)),
+      m.percent !== undefined ? h('progress', { max: 100, value: m.percent, class: m.high ? 'high' : '', 'aria-label': `${m.label}: ${m.text}` }) : '',
+      m.reset ? h('div', { class: 'qm-reset' }, m.reset) : '');
+  }));
 }
 
 function databasesPanel(): HTMLElement {
