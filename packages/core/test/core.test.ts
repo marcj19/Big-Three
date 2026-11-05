@@ -318,6 +318,21 @@ describe('CodexAdapter', () => {
       { type: 'done', status: 'ok', text: 'Listed the files.' },
     ]);
   });
+
+  it('reports an expired timer as a failure and a stop signal as cancellation', async () => {
+    const command = fake('hang');
+    const events = await collect(new CodexAdapter({ command }), { timeoutMs: 800 });
+    expect(events).toEqual([
+      { type: 'error', code: 'timeout', message: 'O Codex atingiu o limite de tempo do turno.' },
+      { type: 'done', status: 'error' },
+    ]);
+
+    const abort = new AbortController();
+    const adapter = new CodexAdapter({ command, onRawLine: () => abort.abort() });
+    expect(await collect(adapter, { timeoutMs: 0, signal: abort.signal })).toEqual([
+      { type: 'done', status: 'cancelled' },
+    ]);
+  }, 15_000);
 });
 
 describe('sign-in from the app', () => {

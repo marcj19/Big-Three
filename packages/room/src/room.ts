@@ -178,6 +178,7 @@ export class Room {
     let doneText: string | undefined;
     let status: TurnResult['status'] = 'ok';
     let error: string | undefined;
+    let errorCode: TurnResult['errorCode'];
     let nativeQuestion: UserQuestion | undefined;
     const usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
     const whole: string[] = [];
@@ -234,6 +235,7 @@ export class Room {
             break;
           case 'error':
             error = error ? `${error}; ${ev.message}` : ev.message;
+            errorCode ??= ev.code;
             break;
           case 'done':
             status = ev.status;
@@ -265,6 +267,7 @@ export class Room {
       sessionId,
       usage,
       error: status === 'error' ? error : undefined,
+      ...(status === 'error' && errorCode ? { errorCode } : {}),
       rateLimited: status === 'error' && looksRateLimited(error),
     };
     this.usage.record(result);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ModelChoice, StartRun } from '../src/shared/api.js';
 import { makeApp, stub, type StubAdapter } from './helpers.js';
 
@@ -25,6 +25,7 @@ describe('one model leads', () => {
     expect((await done(conv.id)).outcome).toMatchObject({ status: 'ok', final: 'Led' });
 
     expect(claude.requests[0]).toMatchObject({ model: 'claude-opus-5-5', effort: 'high', access: 'edit' });
+    expect(claude.requests[0]?.timeoutMs).toBe(0);
     const env = claude.requests[0]!.mcpServers![0]!.env!;
     expect(env.AIO_ROOM_PEERS).toBe('gemini');
     expect(JSON.parse(env.AIO_ROOM_TEAM!)).toEqual({ gemini: { model: 'gemini-4-argon-high' } });
@@ -170,5 +171,35 @@ describe('the lead keeps its own session', () => {
     // Gemini had not been in this conversation, so it got the whole transcript, not a session
     expect(gemini.requests[0]!.sessionId).toBeUndefined();
     expect(gemini.requests[0]!.prompt).toContain('Answer'); // Claude's earlier answer is in what it was told
+  });
+
+  it('explains a configured timeout and does not replay work in a resumed session', async () => {
+    const message = 'O Codex atingiu o limite de tempo do turno.';
+    const codex = stub('codex', (req) => req.sessionId ? [
+      { type: 'tool_call', name: 'shell' },
+      { type: 'error', code: 'timeout', message },
+      { type: 'done', status: 'error' },
+    ] : [
+      { type: 'session', sessionId: 'saved' },
+      { type: 'done', status: 'ok', text: 'Started' },
+    ]);
+    const { app, workdir, events, done } = await makeApp({ adapters: { codex }, timeoutMs: 800, confirmAccess: async () => true });
+    const conv = await app.createConversation({ cwd: workdir });
+    const input = lead(conv.id, { lead: { provider: 'codex' }, access: 'edit' });
+    await app.startRun(input);
+    await done(conv.id);
+    const { runId } = await app.startRun({ ...input, prompt: 'Continue' });
+    await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({
+      type: 'run_done', runId, outcome: { status: 'error', final: '', error: message },
+    })));
+
+    expect(codex.requests.map(({ sessionId, timeoutMs }) => ({ sessionId, timeoutMs }))).toEqual([
+      { sessionId: undefined, timeoutMs: 800 },
+      { sessionId: 'saved', timeoutMs: 800 },
+    ]);
+    const history = await app.runHistory(conv.id);
+    expect(history.find((run) => run.id === runId)?.entries).toContainEqual(expect.objectContaining({
+      kind: 'tool', status: 'error', detail: message,
+    }));
   });
 });

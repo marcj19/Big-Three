@@ -39,6 +39,7 @@ export interface RunRequest {
   systemPrompt?: string;
   mcpServers?: McpServerSpec[];
   signal?: AbortSignal;
+  /** Wall-clock limit for the CLI process. Zero disables the timer. */
   timeoutMs?: number;
 }
 
@@ -68,7 +69,7 @@ export type AgentEvent =
   | { type: 'usage'; inputTokens?: number; outputTokens?: number; costUsd?: number }
   /** Subscription-limit state the CLI reported. `resetsAt` is epoch milliseconds. */
   | { type: 'limit'; status: string; window?: string; resetsAt?: number; usedPercent?: number }
-  | { type: 'error'; message: string }
+  | { type: 'error'; message: string; code?: 'timeout' }
   /** Always the last event of a run. */
   | { type: 'done'; status: DoneStatus; text?: string };
 

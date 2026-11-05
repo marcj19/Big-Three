@@ -191,7 +191,12 @@ export abstract class CliAdapter implements Adapter {
       if (finished) return;
       finished = true;
       if (err instanceof CliAbortError) {
-        yield { type: 'done', status: 'cancelled' };
+        if (err.reason === 'timeout') {
+          yield { type: 'error', code: 'timeout', message: `O ${this.displayName} atingiu o limite de tempo do turno.` };
+          yield { type: 'done', status: 'error' };
+        } else {
+          yield { type: 'done', status: 'cancelled' };
+        }
         return;
       }
       const message =

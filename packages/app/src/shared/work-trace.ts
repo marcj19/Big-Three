@@ -52,7 +52,7 @@ export function recordWork(record: RunRecord, event: AppEvent, at = new Date().t
       finishPhases(e.provider);
       for (const entry of record.entries) if (entry.provider === e.provider && entry.kind === 'tool' && entry.status === 'running') {
         entry.status = e.status === 'ok' ? 'done' : e.status;
-        entry.detail = e.status === 'ok' ? 'Turno encerrado; a CLI não informou um resultado separado desta ferramenta.' : 'Turno interrompido.';
+        entry.detail = e.status === 'ok' ? 'Turno encerrado; a CLI não informou um resultado separado desta ferramenta.' : e.error ?? 'Turno interrompido.';
       }
       record.inputTokens += e.inputTokens; record.outputTokens += e.outputTokens;
       add({ kind: 'phase', provider: e.provider, status: e.status === 'ok' ? 'done' : e.status, label: e.status === 'ok' ? 'Resposta concluída' : e.status === 'cancelled' ? 'Turno cancelado' : 'Falha no turno', detail: e.error });

@@ -32,6 +32,7 @@ export interface TurnResult {
   sessionId?: string;
   usage: TurnUsage;
   error?: string;
+  errorCode?: 'timeout';
   /** The failure looks like a subscription limit, so trying another provider makes sense. */
   rateLimited: boolean;
 }
@@ -60,6 +61,7 @@ export interface TurnOptions {
   sinceIndex?: number;
   cwd?: string;
   signal?: AbortSignal;
+  /** Defaults to ten minutes. Zero disables the turn timer. */
   timeoutMs?: number;
   /** Extra system prompt for this turn (the role the participant plays). */
   role?: string;

@@ -96,7 +96,7 @@ export class RunManager {
    * One model answers and, when it needs to, consults the team itself. Its own CLI session is continued from turn to
    * turn, so it remembers what it read and did; only what happened in the room since is sent again.
    */
-  private async runLead(runId: string, room: Room, input: StartRun, spec: Extract<StartRun['spec'], { kind: 'lead' }>, common: { cwd: string; signal: AbortSignal; mcpServers?: McpServerSpec[] }): Promise<RunOutcome> {
+  private async runLead(runId: string, room: Room, input: StartRun, spec: Extract<StartRun['spec'], { kind: 'lead' }>, common: { cwd: string; signal: AbortSignal; timeoutMs: number; mcpServers?: McpServerSpec[] }): Promise<RunOutcome> {
     const { deps } = this;
     const lead = spec.lead.provider;
     const meta = await deps.store.get(input.conversationId);
@@ -126,7 +126,6 @@ export class RunManager {
     const turn = (session?: { id: string; upto: number }) =>
       room.turn(candidates, team.length ? "Answer the user's latest message. Consider the team's independent recommendations in the transcript." : "Answer the user's latest message.", {
         ...common,
-        timeoutMs: deps.timeoutMs,
         access: spec.access,
         model: spec.lead.model,
         effort: spec.lead.effort,
@@ -137,7 +136,7 @@ export class RunManager {
 
     let result = await turn(meta.sessions?.[lead]);
     // A session that no longer exists (or was cut short) must not trap the conversation: start over with the transcript.
-    if (result.status === 'error' && meta.sessions?.[lead] && !result.rateLimited) {
+    if (result.status === 'error' && meta.sessions?.[lead] && !result.rateLimited && result.errorCode !== 'timeout') {
       await deps.store.setSession(input.conversationId, lead, undefined);
       result = await turn(undefined);
     }
@@ -190,7 +189,8 @@ export class RunManager {
         peerServer: input.peerTools ? { entry: deps.peerEntry, activityFile: activity?.file, team: input.spec.kind === 'lead' ? teamOf(input.spec.team, input.spec.lead.provider) : undefined } : undefined,
       });
       const db = input.connections.length ? deps.databaseTools(input.connections) : undefined;
-      const common = { cwd, signal: abort.signal, timeoutMs: deps.timeoutMs, withPeerTools: input.peerTools, mcpServers: db ? [db] : undefined };
+      // Desktop tasks can run long commands and are always stoppable from the UI.
+      const common = { cwd, signal: abort.signal, timeoutMs: deps.timeoutMs ?? 0, withPeerTools: input.peerTools, mcpServers: db ? [db] : undefined };
       const { spec } = input;
 
       if (spec.kind === 'chat') {
@@ -204,7 +204,7 @@ export class RunManager {
           await planExecute(room, { task: input.prompt, planner: spec.planner, executor: spec.executor, executorAccess: spec.executorAccess, reviewer: spec.reviewer, ...common }),
         );
       } else if (spec.kind === 'lead') {
-        outcome = await this.runLead(runId, room, input, spec, { cwd, signal: abort.signal, mcpServers: db ? [db] : undefined });
+        outcome = await this.runLead(runId, room, input, spec, common);
       } else if (spec.kind === 'flow') {
         const order: ProviderId[] = ['claude', 'gemini', 'codex'];
         const steps: FlowStep[] = spec.steps.map((s) => ({

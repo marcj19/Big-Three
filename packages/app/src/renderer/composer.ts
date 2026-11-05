@@ -42,7 +42,23 @@ export function setPrompt(text: string): void {
 }
 
 // The send button appears with a spring once there is something to send, like in Messages.
-const sendBtn = h('button', { class: 'send idle', type: 'button', onClick: () => (state.run ? void api.cancelRun(state.run.runId) : void ctx.send()) });
+const sendBtn = h('button', {
+  class: 'send idle',
+  type: 'button',
+  onClick: (event: MouseEvent) => {
+    if (state.run) {
+      // A double-click on Send can finish after this button has become Stop.
+      if (event.detail > 1) {
+        promptEl.focus();
+        return;
+      }
+      void api.cancelRun(state.run.runId).catch((err: Error) => toast(err.message, 'error'));
+    } else {
+      promptEl.focus(); // Keep Enter in the composer when the button switches to Stop.
+      void ctx.send();
+    }
+  },
+});
 let sendMode: 'send' | 'stop' | '' = '';
 function updateSend(): void {
   const busy = state.run !== undefined;
