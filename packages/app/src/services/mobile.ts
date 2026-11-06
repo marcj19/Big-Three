@@ -1,107 +1,181 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
-import { MOBILE_PORT, type MobileAccessState, type MobileCommand } from '../shared/mobile.js';
+import { MOBILE_RELAY, type MobileAccessState, type MobileCommand } from '../shared/mobile.js';
 import type { AppService } from './app-service.js';
 
-const PAIR_TIME = 5 * 60_000;
-const id = z.string().uuid();
-const secret = () => randomBytes(24).toString('base64url');
-const digest = (token: string) => createHash('sha256').update(token).digest();
-const matches = (token: string, expected: Buffer | undefined) => !!expected && timingSafeEqual(digest(token), expected);
+const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+const token = z.string().regex(TOKEN);
+const exchangeId = z.string().uuid();
+const request = z.object({ conversationId: z.string().uuid().optional(), etag: token.optional() }).strict();
+const storedSession = z.object({ id: token, writer: token, key: token });
+export type CompanionSession = z.infer<typeof storedSession>;
+const nextResponse = z.object({ paired: z.boolean(), request: z.object({ id: exchangeId, payload: z.string().max(4096) }).optional() });
 
-/** A dedicated loopback API for mobile clients. A private HTTPS transport can forward to this port. */
+const secret = () => randomBytes(32).toString('base64url');
+export const mobileHash = (value: string) => createHash('sha256').update(value).digest('base64url');
+export function derivePairing(code: string) {
+  const derive = (label: string) => createHmac('sha256', Buffer.from(code, 'base64url')).update(`big-three/v1/${label}`).digest('base64url');
+  return { id: derive('id'), claim: derive('claim'), key: derive('key') };
+}
+
+export function seal(key: string, exchange: string, direction: 'read' | 'reply', json: string): string {
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', Buffer.from(key, 'base64url'), nonce);
+  cipher.setAAD(Buffer.from(`big-three/v1/${direction}/${exchange}`));
+  return Buffer.concat([nonce, cipher.update(json), cipher.final(), cipher.getAuthTag()]).toString('base64url');
+}
+
+export function open(key: string, exchange: string, direction: 'read' | 'reply', payload: string): unknown {
+  const bytes = Buffer.from(payload, 'base64url');
+  if (bytes.length < 28) throw new Error('Invalid encrypted payload');
+  const decipher = createDecipheriv('aes-256-gcm', Buffer.from(key, 'base64url'), bytes.subarray(0, 12));
+  decipher.setAAD(Buffer.from(`big-three/v1/${direction}/${exchange}`));
+  decipher.setAuthTag(bytes.subarray(-16));
+  const json = Buffer.concat([decipher.update(bytes.subarray(12, -16)), decipher.final()]).toString('utf8');
+  return JSON.parse(json);
+}
+
+interface MobileOptions {
+  load?: () => Promise<unknown>;
+  save?: (session: CompanionSession | undefined) => Promise<void>;
+  relayUrl?: string;
+}
+
+class RelayError extends Error {
+  constructor(readonly status: number) { super('Não foi possível se conectar ao servidor do Big Three.'); }
+}
+
+/** The PC only makes outbound requests. The relay never receives the pairing code or the encryption key. */
 export class MobileGateway {
-  private server?: Server;
-  private opening?: Promise<void>;
-  private session?: { login: string; credential: Buffer };
+  private session?: CompanionSession;
   private pairing?: { code: string; expiresAt: number };
+  private paired = false;
+  private error?: string;
+  private poll?: AbortController;
+  private commands = Promise.resolve();
+  private readonly relay: string;
 
-  constructor(private readonly app: Pick<AppService, 'mobileConversations' | 'mobileConversation'>, private readonly port = MOBILE_PORT) {}
+  constructor(private readonly app: Pick<AppService, 'mobileConversations' | 'mobileConversation'>, private readonly options: MobileOptions = {}) {
+    this.relay = options.relayUrl ?? MOBILE_RELAY;
+  }
 
   state(): MobileAccessState {
     const pairing = this.pairing && this.pairing.expiresAt > Date.now() ? this.pairing : undefined;
-    const address = this.server?.address() as AddressInfo | null | undefined;
-    return { enabled: !!address, paired: !!this.session, port: address?.port ?? this.port, pairing };
+    return { enabled: !!this.session, paired: this.paired, error: this.error, pairing };
   }
 
-  async manage(command?: MobileCommand): Promise<MobileAccessState> {
-    if (this.opening) await this.opening;
-    if (command === 'stop') {
-      this.stop();
-    } else if (command === 'pair') {
-      if (!this.server) {
-        this.opening = this.listen();
-        try { await this.opening; } finally { this.opening = undefined; }
+  async restore(): Promise<void> {
+    const stored = storedSession.safeParse(await this.options.load?.());
+    if (stored.success && !this.session) this.start(stored.data);
+  }
+
+  manage(command?: MobileCommand): Promise<MobileAccessState> {
+    if (!command) return Promise.resolve(this.state());
+    const result = this.commands.then(async () => {
+      if (command === 'pair') await this.register();
+      else {
+        const previous = this.session;
+        await this.options.save?.(undefined);
+        this.shutdown();
+        this.session = undefined;
+        this.pairing = undefined;
+        this.paired = false;
+        this.error = undefined;
+        if (previous) await this.revoke(previous);
       }
-      this.pairing = { code: secret(), expiresAt: Date.now() + PAIR_TIME };
+      return this.state();
+    });
+    this.commands = result.then(() => {}, () => {});
+    return result;
+  }
+
+  shutdown(): void { this.poll?.abort(); this.poll = undefined; }
+
+  private async register(): Promise<void> {
+    const code = secret();
+    const { id, claim, key } = derivePairing(code);
+    const next = { id, key, writer: secret() };
+    const previous = this.session;
+    const data = await this.call('/sessions', next.writer, 'POST', { id, verifier: mobileHash(claim) });
+    try {
+      const { expiresAt } = z.object({ expiresAt: z.number().int().positive() }).parse(data);
+      await this.options.save?.(next);
+      this.pairing = { code, expiresAt };
+      this.start(next);
+    } catch (error) {
+      await this.revoke(next);
+      throw error;
     }
-    return this.state();
+    if (previous) void this.revoke(previous);
   }
 
-  stop(): void {
-    this.pairing = undefined;
-    this.session = undefined;
-    const server = this.server;
-    this.server = undefined;
-    server?.close();
-    server?.closeAllConnections();
+  private async revoke({ id, writer }: CompanionSession): Promise<void> {
+    // If the relay is unreachable, shutting down the desktop poll still cuts off access to data.
+    await this.call(`/sessions/${id}`, writer, 'DELETE', undefined, AbortSignal.timeout(3000)).catch(() => {});
   }
 
-  private listen(): Promise<void> {
-    const server = createServer({ requestTimeout: 10_000, headersTimeout: 5_000, keepAliveTimeout: 2_000 }, (req, res) => {
-      void this.request(req, res);
-    });
-    server.maxConnections = 12;
-    return new Promise((resolve, reject) => {
-      server.once('error', () => reject(new Error(`Não foi possível ativar o acesso pelo celular na porta ${this.port}.`)));
-      server.listen(this.port, '127.0.0.1', () => {
-        this.server = server;
-        resolve();
-      });
-    });
+  private start(session: CompanionSession): void {
+    this.shutdown();
+    this.session = session;
+    this.paired = false;
+    this.error = undefined;
+    const controller = new AbortController();
+    this.poll = controller;
+    void this.run(session, controller.signal);
   }
 
-  private async request(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const send = (status: number, value: unknown) => {
-      const json = JSON.stringify(value);
-      const headers: Record<string, string> = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
-      if (req.method === 'GET' && status === 200) {
-        headers.etag = `"${digest(json).toString('base64url')}"`;
-        if (req.headers['if-none-match'] === headers.etag) {
-          res.writeHead(304, headers).end();
+  private async run(session: CompanionSession, signal: AbortSignal): Promise<void> {
+    const root = `/sessions/${session.id}`;
+    while (!signal.aborted) {
+      try {
+        const next = nextResponse.parse(await this.call(`${root}/next`, session.writer, 'GET', undefined, signal));
+        if (signal.aborted) return;
+        this.paired = next.paired;
+        this.error = undefined;
+        if (next.paired) this.pairing = undefined;
+        if (next.request) await this.reply(session, next.request, signal);
+      } catch (error) {
+        if (signal.aborted) return;
+        if (error instanceof RelayError && error.status === 401) {
+          this.paired = false;
+          this.pairing = undefined;
+          this.error = 'O pareamento expirou. Gere um novo token.';
           return;
         }
+        this.error = 'Servidor do Big Three indisponível. Tentando reconectar…';
+        await delay(3000, undefined, { signal }).catch(() => {});
       }
-      res.writeHead(status, headers).end(json);
-    };
-    // Serve strips incoming identity headers and only supplies a login for authenticated tailnet traffic.
-    const login = req.headers['tailscale-user-login'];
-    if (typeof login !== 'string' || !login.trim()) return send(403, { error: 'Conecte pelo Tailscale Serve na rede privada.' });
-    // Credentials are only accepted in the header, never in URLs or logs.
-    const token = /^Bearer ([\w-]{32})$/.exec(req.headers.authorization ?? '')?.[1];
-    if (!token) return send(401, { error: 'Credencial inválida.' });
-    if (req.method === 'POST' && req.url === '/v1/pair') {
-      const pairing = this.state().pairing;
-      if (!pairing || !matches(token, digest(pairing.code))) return send(401, { error: 'Código inválido ou vencido.' });
-      const credential = secret();
-      this.session = { login, credential: digest(credential) };
-      this.pairing = undefined;
-      return send(200, { credential });
     }
-    if (this.session?.login !== login || !matches(token, this.session.credential)) return send(401, { error: 'Pareamento encerrado. Gere um novo código no PC.' });
-    if (req.method !== 'GET') return send(405, { error: 'O celular tem acesso de acompanhamento.' });
+  }
+
+  private async reply(session: CompanionSession, item: { id: string; payload: string }, signal: AbortSignal): Promise<void> {
+    let response: { status: number; etag?: string; data?: unknown } = { status: 400 };
     try {
-      if (req.url === '/v1/conversations') return send(200, await this.app.mobileConversations());
-      const match = /^\/v1\/conversations\/([\da-f-]+)$/.exec(req.url ?? '');
-      if (match && id.safeParse(match[1]).success) {
-        const detail = await this.app.mobileConversation(match[1]!);
-        if (detail) return send(200, detail);
-      }
-      send(404, { error: 'Conversa ou rota não encontrada.' });
-    } catch {
-      send(500, { error: 'Não foi possível consultar as informações no PC.' });
+      const input = request.parse(open(session.key, item.id, 'read', item.payload));
+      const data = input.conversationId ? await this.app.mobileConversation(input.conversationId) : await this.app.mobileConversations();
+      const etag = data === undefined ? undefined : mobileHash(JSON.stringify(data));
+      response = data === undefined ? { status: 404 } : etag === input.etag ? { status: 304, etag } : { status: 200, etag, data };
+    } catch { /* A corrupted request receives no conversation data. */ }
+    const payload = seal(session.key, item.id, 'reply', JSON.stringify(response));
+    await this.call(`/sessions/${session.id}/reply`, session.writer, 'POST', { exchange: item.id, payload }, signal).catch((error) => {
+      if (!(error instanceof RelayError) || error.status !== 404) throw error;
+    });
+  }
+
+  private async call(path: string, credential: string, method: string, body?: object, signal?: AbortSignal): Promise<unknown> {
+    const timeout = AbortSignal.timeout(17_000);
+    try {
+      const response = await fetch(this.relay + path, {
+        method, redirect: 'error', signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        headers: { authorization: `Bearer ${credential}`, ...(body ? { 'content-type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!response.ok) throw new RelayError(response.status);
+      return await response.json();
+    } catch (error) {
+      if (error instanceof RelayError) throw error;
+      throw new RelayError(503);
     }
   }
 }

@@ -1,60 +1,52 @@
-import { describe, expect, it } from 'vitest';
-import { MobileGateway } from '../src/services/mobile.js';
-import { makeApp, stub } from './helpers.js';
+import { randomUUID } from 'node:crypto';
+import { describe, expect, it, vi } from 'vitest';
+import { derivePairing, MobileGateway, mobileHash, open, seal, type CompanionSession } from '../src/services/mobile.js';
 
-describe('mobile pairing', () => {
-  it('exchanges a one-time token, reads the live desktop run and revokes access', async () => {
-    const claude = stub('claude', 'Resposta de teste.', { delayMs: 1200 });
-    const { app, workdir, done } = await makeApp({ adapters: { claude } });
-    const conv = await app.createConversation({ cwd: workdir, title: 'Teste do Android' });
-    const gateway = new MobileGateway(app, 0);
-    expect(gateway.state().enabled).toBe(false);
-
-    const state = await gateway.manage('pair');
-    const code = state.pairing!.code;
-    const base = `http://127.0.0.1:${state.port}`;
-    const detail = `/v1/conversations/${conv.id}`;
-    const login = 'phone@example.invalid';
-    const call = (route: string, token?: string, method = 'GET', identity = login) => fetch(base + route, {
-      method, headers: { ...(identity ? { 'tailscale-user-login': identity } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    });
+describe('mobile companion', () => {
+  it('restores a desktop session and only answers authenticated, read-only requests', async () => {
+    let saved: CompanionSession | undefined;
+    const queued: { id: string; payload: string }[] = [];
+    const replies: { exchange: string; payload: string }[] = [];
+    const transmitted: string[] = [];
+    const conversation = randomUUID();
+    const app = { mobileConversations: vi.fn(async () => ({ conversations: [] })),
+      mobileConversation: vi.fn(async () => ({ title: 'Conversa privada', messages: [], activity: null })) };
+    const options = { relayUrl: 'http://relay.test', load: async () => saved,
+      save: async (value: CompanionSession | undefined) => { saved = value; } };
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      transmitted.push(init.body?.toString() ?? '');
+      if (url.endsWith('/next')) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        init.signal?.throwIfAborted();
+        return Response.json({ paired: !!queued.length || !!replies.length, request: queued.shift() });
+      }
+      if (url.endsWith('/reply')) replies.push(JSON.parse(init.body!.toString()));
+      return Response.json({ expiresAt: Date.now() + 60_000 });
+    }));
+    const first = new MobileGateway(app, options);
+    const restored = new MobileGateway(app, options);
     try {
-      expect((await call('/v1/conversations?token=' + code)).status).toBe(401);
-      expect((await call('/v1/conversations', code)).status).toBe(401);
-      expect((await call('/v1/pair', code, 'POST', '')).status).toBe(403);
-      const paired = await call('/v1/pair', code, 'POST');
-      expect(paired.status).toBe(200);
-      const { credential } = await paired.json() as { credential: string };
-      expect(credential).not.toBe(code);
-      expect((await call('/v1/pair', code, 'POST')).status).toBe(401);
-      expect((await call(detail, credential, 'GET', '')).status).toBe(403);
-      expect((await call(detail, credential, 'GET', 'other@example.invalid')).status).toBe(401);
-      expect(gateway.state()).toMatchObject({ paired: true, pairing: undefined });
-      expect((await call('/v1/conversations', credential, 'POST')).status).toBe(405);
-      expect((await call('/api/startRun', credential)).status).toBe(404);
-
-      await app.startRun({ conversationId: conv.id, prompt: 'Conte uma novidade.',
-        spec: { kind: 'chat', providers: ['claude'], access: 'read-only' }, connections: [], peerTools: false });
-      const list = await (await call('/v1/conversations', credential)).json() as { conversations: object[] };
-      expect(list.conversations[0]).toEqual({ id: conv.id, title: 'Teste do Android', updatedAt: expect.any(String), running: true });
-      expect(await (await call(detail, credential)).json()).toMatchObject({ activity: { status: 'running' } });
-      await done(conv.id);
-      const finished = await (await call(detail, credential)).json();
-      expect(finished).toMatchObject({ activity: { status: 'ok' }, messages: [
-        { author: 'user', text: 'Conte uma novidade.' }, { author: 'claude', text: 'Resposta de teste.' },
-      ] });
-      expect(JSON.stringify(finished)).not.toContain(workdir);
-      const snapshot = await call(detail, credential);
-      const tag = snapshot.headers.get('etag')!;
-      await snapshot.json();
-      expect(tag).toBeTruthy();
-      expect((await fetch(base + detail, { headers: { authorization: `Bearer ${credential}`, 'tailscale-user-login': login, 'if-none-match': tag } })).status).toBe(304);
-
-      const another = await gateway.manage('pair');
-      expect((await call('/v1/pair', another.pairing!.code, 'POST')).status).toBe(200);
-      expect((await call(detail, credential)).status).toBe(401);
-      expect((await gateway.manage('stop')).enabled).toBe(false);
-      await expect(call(detail, credential)).rejects.toThrow();
-    } finally { gateway.stop(); }
+      const code = (await first.manage('pair')).pairing!.code;
+      const { id, claim, key } = derivePairing(code);
+      expect(JSON.parse(transmitted[0]!)).toEqual({ id, verifier: mobileHash(claim) });
+      expect(saved?.key).toBe(key);
+      first.shutdown();
+      await restored.restore();
+      const read = randomUUID(), bad = randomUUID();
+      queued.push({ id: read, payload: seal(key, read, 'read', JSON.stringify({ conversationId: conversation })) },
+        { id: bad, payload: seal(key, read, 'read', '{}') });
+      await vi.waitFor(() => expect(replies).toHaveLength(2));
+      expect(open(key, read, 'reply', replies[0]!.payload)).toMatchObject({ status: 200, data: { title: 'Conversa privada' } });
+      expect(open(key, bad, 'reply', replies[1]!.payload)).toEqual({ status: 400 });
+      expect(app.mobileConversation).toHaveBeenCalledExactlyOnceWith(conversation);
+      expect(app.mobileConversations).not.toHaveBeenCalled();
+      expect(transmitted.join('')).not.toContain('Conversa privada');
+      expect(transmitted.join('')).not.toContain(code);
+      await restored.manage('stop');
+      expect(saved).toBeUndefined();
+      expect(restored.state().enabled).toBe(false);
+    } finally {
+      first.shutdown(); restored.shutdown(); vi.unstubAllGlobals();
+    }
   });
 });

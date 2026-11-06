@@ -1,8 +1,9 @@
 import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { configDir } from '@aio/db-broker';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, session, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, safeStorage, session, shell, type IpcMainInvokeEvent } from 'electron';
 import { AppService } from '../services/app-service.js';
 import { API_METHODS, type AppEvent } from '../shared/api.js';
 import { EmbeddedBrowser } from './browser.js';
@@ -54,8 +55,26 @@ const service = new AppService({
     return r.canceled ? null : (r.filePaths[0] ?? null);
   },
 });
-const mobile = new MobileGateway(service);
-app.on('before-quit', () => mobile.stop());
+const mobileSessionFile = path.join(configDir(), 'mobile-session.enc');
+const mobile = new MobileGateway(service, {
+  load: async () => {
+    if (!safeStorage.isEncryptionAvailable() || !existsSync(mobileSessionFile)) return undefined;
+    return JSON.parse(safeStorage.decryptString(await readFile(mobileSessionFile)));
+  },
+  save: async (value) => {
+    if (!value) return rm(mobileSessionFile, { force: true });
+    if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')) {
+      throw new Error('O armazenamento seguro do sistema está indisponível para salvar o pareamento.');
+    }
+    await mkdir(path.dirname(mobileSessionFile), { recursive: true });
+    const temporary = `${mobileSessionFile}.tmp`;
+    try {
+      await writeFile(temporary, safeStorage.encryptString(JSON.stringify(value)), { mode: 0o600 });
+      await rename(temporary, mobileSessionFile);
+    } finally { await rm(temporary, { force: true }).catch(() => {}); }
+  },
+});
+app.on('before-quit', () => mobile.shutdown());
 
 /** Only our own page may call the API; anything else loaded into the window (it should never be) is ignored. */
 function fromOurPage(event: IpcMainInvokeEvent): boolean {
@@ -126,6 +145,7 @@ if (process.env.AIO_DEMO !== '1' && !app.requestSingleInstanceLock()) {
   void app.whenReady().then(() => {
     if (process.platform === 'win32') app.setAppUserModelId('com.marcj19.bigthree');
     session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+    void mobile.restore().catch(() => {});
     createWindow();
     if (installed) setTimeout(() => void updates.perform('check'), 3000).unref();
     app.on('activate', () => {

@@ -24,13 +24,12 @@ export function openMobileAccess(): void {
     const { pairing } = state;
     keepFocus(content, () => content.replaceChildren(
       h('p', { role: 'status' }, state.paired ? 'Celular pareado.' : state.enabled ? 'Aguardando pareamento.' : 'Acesso pelo celular desativado.'),
+      state.error ? h('p', { class: 'muted small' }, state.error) : '',
       pairing ? h('div', { class: 'mobile-pair' }, h('label', { for: 'mobile-code' }, 'Token de pareamento · uso único · 5 minutos'),
         h('input', { id: 'mobile-code', value: pairing.code, readonly: true, 'data-fk': 'mobile-code', spellcheck: 'false' }),
         h('button', { class: 'btn', type: 'button', 'data-fk': 'mobile-copy', onClick: () => void writeClipboardText(pairing.code)
           .then(() => toast('Token copiado.')).catch(() => toast('Selecione o token para copiar.', 'error')) }, 'Copiar token')) : '',
-      state.enabled ? h('div', { class: 'mobile-pair' }, h('p', {}, 'Com o Tailscale conectado neste PC, abra o terminal como administrador e execute:'),
-        h('code', {}, `tailscale serve --bg --https=8443 http://127.0.0.1:${state.port}`),
-        h('p', { class: 'muted small' }, 'No Android, conecte-se à mesma rede Tailscale e use o endereço HTTPS exibido pelo comando.')) : '',
+      pairing ? h('p', { class: 'muted small' }, 'Abra o Big Three no Android e cole este token. O aplicativo se conecta ao servidor automaticamente.') : '',
       h('div', { class: 'row-end' },
         state.enabled ? h('button', { class: 'btn', type: 'button', 'data-fk': 'mobile-stop', onClick: () => void load('stop') }, 'Desativar acesso') : '',
         h('button', { class: 'btn primary', type: 'button', 'data-fk': 'mobile-pair', onClick: () => void load('pair') }, pairing || state.paired ? 'Gerar novo token' : 'Gerar token')),

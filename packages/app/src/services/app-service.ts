@@ -191,7 +191,7 @@ export class AppService implements Api {
     if (!meta) return undefined;
     const [messages, history] = await Promise.all([this.store.messages(id), this.journal.list(id, 1)]);
     const run = history[0];
-    return { title: meta.title, messages: messages.slice(-40).map(({ author, at, text }) => ({ author, at, text: text.slice(0, 12_000) })),
+    return { title: meta.title, messages: messages.slice(-30).map(({ author, at, text }) => ({ author, at, text: text.slice(0, 10_000) })),
       activity: run ? { status: run.status, entries: run.entries.slice(-18).map(({ at, label, provider, peer, status }) => ({ at, label, provider, peer, status })) } : null };
   }
   async browserState(): Promise<BrowserState> { return this.options.browser?.state() ?? { supported: false, url: '', title: '', loading: false, canBack: false, canForward: false }; }

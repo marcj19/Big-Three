@@ -126,14 +126,7 @@ public final class MainActivity extends Activity {
         status.setText(message);
         body.removeAllViews();
         heading("Parear com o computador");
-        body.addView(text("No PC, abra Acesso pelo celular e gere um token. No Android, conecte-se à mesma rede Tailscale e use o endereço HTTPS do computador.", 16, MUTED, false));
-        EditText endpoint = new EditText(this);
-        endpoint.setHint("https://seu-pc.…ts.net");
-        endpoint.setContentDescription("Endereço HTTPS do computador");
-        endpoint.setSingleLine(true);
-        endpoint.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        endpoint.setText(connection.previousEndpoint());
-        body.addView(endpoint);
+        body.addView(text("No Big Three atualizado do PC, abra Acesso pelo celular, gere um token e cole aqui. A conexão com o servidor é automática.", 16, MUTED, false));
         EditText code = new EditText(this);
         code.setHint("Token gerado no PC");
         code.setContentDescription("Token de pareamento");
@@ -144,13 +137,12 @@ public final class MainActivity extends Activity {
         Button pair = button("Parear", null);
         body.addView(pair);
         pair.setOnClickListener(view -> {
-            String address = endpoint.getText().toString().trim();
             String token = code.getText().toString().trim();
             pair.setEnabled(false);
             status.setText("Pareando…");
             network.execute(() -> {
                 try {
-                    DesktopConnection.Session result = connection.pair(address, token);
+                    DesktopConnection.Session result = connection.pair(token);
                     runOnUiThread(() -> {
                         if (isDestroyed()) return;
                         session = result;
@@ -185,10 +177,10 @@ public final class MainActivity extends Activity {
         DesktopConnection.Session credential = session;
         int request = generation;
         String etag = lastEtag;
-        String route = conversation == null ? "/v1/conversations" : "/v1/conversations/" + conversation;
+        String selected = conversation;
         network.execute(() -> {
             try {
-                DesktopConnection.Snapshot result = connection.read(credential, route, etag);
+                DesktopConnection.Snapshot result = connection.read(credential, selected, etag);
                 runOnUiThread(() -> {
                     if (isDestroyed()) return;
                     if (request == generation) {
@@ -292,8 +284,8 @@ public final class MainActivity extends Activity {
     }
 
     private static String messageFor(Exception error) {
-        if (error instanceof IllegalArgumentException || error instanceof DesktopConnection.Rejected || error instanceof DesktopConnection.PrivateNetworkRequired) return error.getMessage();
-        return "Não foi possível alcançar o PC. Confira o endereço, o Tailscale e se o Big Three está aberto.";
+        if (error instanceof IllegalArgumentException || error instanceof DesktopConnection.Rejected || error instanceof DesktopConnection.Offline) return error.getMessage();
+        return "Não foi possível se conectar ao Big Three. Confira sua internet e se o app do PC está aberto.";
     }
 
     private void card(String title, String metadata) {
