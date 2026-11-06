@@ -10,9 +10,10 @@ export interface RoomMessage {
   text: string;
   at: string;
   attachments?: RoomAttachment[];
+  runId?: string;
 }
 
-export type NewMessage = Pick<RoomMessage, 'author' | 'text' | 'attachments'>;
+export type NewMessage = Pick<RoomMessage, 'author' | 'text' | 'attachments' | 'runId'>;
 
 /** Where the transcript lives. A file-backed store lets the MCP peer server (another process) share it. */
 export interface TranscriptStore {
@@ -43,8 +44,8 @@ export interface TurnResult {
 export type RoomEvent =
   | { type: 'turn_start'; provider: ProviderId; instruction: string }
   | { type: 'text'; provider: ProviderId; text: string; partial: boolean }
-  | { type: 'tool_call'; provider: ProviderId; name: string }
-  | { type: 'tool_result'; provider: ProviderId; name?: string; isError: boolean }
+  | { type: 'tool_call'; provider: ProviderId; name: string; context?: string }
+  | { type: 'tool_result'; provider: ProviderId; name?: string; isError: boolean; exitCode?: number }
   | ({ type: 'subagent'; provider: ProviderId } & SubagentActivity)
   | { type: 'preview'; provider: ProviderId; url: string }
   | { type: 'limit'; provider: ProviderId; status: string; window?: string; resetsAt?: number; usedPercent?: number }

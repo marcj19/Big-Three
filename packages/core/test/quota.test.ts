@@ -3,8 +3,26 @@ import { describe, expect, it } from 'vitest';
 import { parseCodexQuota, readCodexQuota } from '../src/codex-quota.js';
 import { sanitizeEnv } from '../src/env.js';
 import { ClaudeAdapter } from '../src/adapters/claude.js';
+import { CodexAdapter } from '../src/adapters/codex.js';
 
 const fixture = fileURLToPath(new URL('./fixtures/quota-server.mjs', import.meta.url));
+describe('Codex model catalog', () => {
+  const command = (mode: string) => ({ file: process.execPath, prefixArgs: [fixture, mode] });
+  const automatic = { id: '', label: 'Automático (padrão do Codex)' };
+
+  it('lists all visible pages with selectable model slugs and keeps automatic selection', async () => {
+    expect(await new CodexAdapter({ command: command('models') }).listModels()).toEqual([
+      automatic,
+      { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' },
+      { id: 'gpt-6-luna', label: 'gpt-6-luna' },
+    ]);
+  });
+
+  it('leaves automatic selection available on older or failing CLIs', async () => {
+    expect(await new CodexAdapter({ command: command('error') }).listModels()).toEqual([automatic]);
+  });
+});
+
 describe('Codex account quotas', () => {
   it('reads all metered buckets once, preserves zero and rejects invalid percentages', () => {
     expect(parseCodexQuota({ rateLimits: { primary: { usedPercent: 99 } }, rateLimitsByLimitId: {

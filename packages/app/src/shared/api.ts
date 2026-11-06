@@ -101,6 +101,7 @@ export interface MessageView {
   text: string;
   at: string;
   attachments?: string[];
+  runId?: string;
 }
 
 export type RunSpec =
@@ -170,8 +171,8 @@ export type LoginEventView = { type: 'output'; line: string } | { type: 'done'; 
 export type RoomEventView =
   | { type: 'turn_start'; provider: ProviderId; instruction: string }
   | { type: 'text'; provider: ProviderId; text: string; partial: boolean }
-  | { type: 'tool_call'; provider: ProviderId; name: string }
-  | { type: 'tool_result'; provider: ProviderId; name?: string; isError: boolean }
+  | { type: 'tool_call'; provider: ProviderId; name: string; context?: string }
+  | { type: 'tool_result'; provider: ProviderId; name?: string; isError: boolean; exitCode?: number }
   | ({ type: 'subagent'; provider: ProviderId } & SubagentActivity)
   | { type: 'preview'; provider: ProviderId; url: string }
   | { type: 'limit'; provider: ProviderId; status: string; window?: string; resetsAt?: number; usedPercent?: number }
@@ -287,7 +288,7 @@ export interface BrowserState { supported: boolean; url: string; title: string; 
 export interface WorkEntry {
   id: number; at: string; kind: 'start' | 'phase' | 'tool' | 'consult' | 'subagent' | 'question' | 'step' | 'finish' | 'notice';
   provider?: ProviderId; peer?: ProviderId; status: 'running' | 'done' | 'error' | 'cancelled' | 'skipped';
-  label: string; detail?: string; tool?: string; stepIndex?: number; activityId?: string;
+  label: string; detail?: string; tool?: string; context?: string; stepIndex?: number; activityId?: string;
 }
 export interface RunRecord {
   id: string; conversationId: string; prompt: string; startedAt: string; endedAt?: string;

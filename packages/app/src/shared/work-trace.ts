@@ -1,4 +1,4 @@
-import type { AppEvent, ProviderId, RunRecord, StartRun, WorkEntry } from './api.js';
+import type { AppEvent, MessageView, ProviderId, RunRecord, StartRun, WorkEntry } from './api.js';
 
 type PeerFailure = Extract<AppEvent, { type: 'peer_activity' }>['failure'];
 const PEER_FAILURE: Record<NonNullable<PeerFailure>, string> = {
@@ -23,8 +23,41 @@ export function toolLabel(name: string): string {
   if (/apply_patch|write_file|edit_file|multiedit|(^|__|\.)edit$|(^|__|\.)write$/.test(value)) return 'Alterando arquivos';
   if (/search|grep|glob/.test(value)) return 'Pesquisando';
   if (/read_file|read_room|(^|__|\.)read$|open_file|view_file|list_directory/.test(value)) return 'Lendo arquivos';
-  if (/exec_command|shell|terminal|bash|run_command/.test(value)) return 'Executando comando';
+  if (/exec_command|shell|terminal|bash|powershell|run_command/.test(value)) return 'Executando comando';
   return 'Usando ferramenta';
+}
+
+/** Old transcripts lack IDs. Match their prompts by proximity, using each run and message at most once. */
+export function runsByMessage(messages: MessageView[], runs: RunRecord[]): Map<MessageView, RunRecord> {
+  const result = new Map<MessageView, RunRecord>();
+  const available = new Map(runs.map((run) => [run.id, run]));
+  for (const message of messages) {
+    const run = message.author === 'user' && message.runId ? available.get(message.runId) : undefined;
+    if (run) {
+      result.set(message, run);
+      available.delete(run.id);
+    }
+  }
+  const legacy = new Map<string, MessageView[]>();
+  for (const message of messages) {
+    if (message.author !== 'user' || message.runId) continue;
+    const prompt = message.text.slice(0, 400);
+    const group = legacy.get(prompt);
+    if (group) group.push(message); else legacy.set(prompt, [message]);
+  }
+  const candidates = [...available.values()].flatMap((run) => (legacy.get(run.prompt) ?? [])
+    .map((message) => ({ message, run, distance: Math.abs(Date.parse(run.startedAt) - Date.parse(message.at)) }))
+    .filter(({ distance }) => distance < 30_000))
+    .sort((a, b) => a.distance - b.distance);
+  for (const { message, run } of candidates) {
+    if (result.has(message) || !available.delete(run.id)) continue;
+    result.set(message, run);
+  }
+  return result;
+}
+
+export function timelineEntries(run: RunRecord): WorkEntry[] {
+  return run.entries.filter((entry) => entry.kind !== 'phase' || entry.status === 'running' || entry.status === 'error');
 }
 export function newRunRecord(id: string, input: StartRun, at = new Date().toISOString()): RunRecord {
   return { id, conversationId: input.conversationId, prompt: input.prompt.slice(0, 400), startedAt: at, status: 'running',
@@ -47,10 +80,13 @@ export function recordWork(record: RunRecord, event: AppEvent, at = new Date().t
       const phase = latest((entry) => entry.provider === e.provider && entry.kind === 'phase' && entry.status === 'running');
       if (phase?.label !== 'Preparando a resposta') { finishPhases(e.provider); add({ kind: 'phase', provider: e.provider, status: 'running', label: 'Preparando a resposta' }); }
     } else if (e.type === 'tool_call') {
-      finishPhases(e.provider); add({ kind: 'tool', provider: e.provider, status: 'running', label: toolLabel(e.name), tool: e.name.slice(0, 160) });
+      finishPhases(e.provider); add({ kind: 'tool', provider: e.provider, status: 'running', label: toolLabel(e.name), tool: e.name.slice(0, 160), context: e.context });
     } else if (e.type === 'tool_result') {
       const entry = latest((entry) => entry.provider === e.provider && entry.kind === 'tool' && entry.status === 'running' && (!e.name || entry.tool === e.name));
-      if (entry) entry.status = e.isError ? 'error' : 'done';
+      if (entry) {
+        entry.status = e.isError ? 'error' : 'done';
+        if (e.exitCode !== undefined) entry.detail = `Código de saída ${e.exitCode}`;
+      }
       finishPhases(e.provider);
       add({ kind: 'phase', provider: e.provider, status: 'running', label: e.isError ? 'Verificando erro de ferramenta' : 'Conferindo o resultado' });
     } else if (e.type === 'subagent') {

@@ -7,6 +7,7 @@ export const ctx = {
   refreshConversations: async (): Promise<void> => {},
   openConversation: async (_id: string, _keepScroll?: boolean): Promise<void> => {},
   newConversation: async (): Promise<boolean> => false,
+  renameChat: (_id: string, _title: string): void => {},
   send: async (): Promise<void> => {},
   stopRun: async (_runId: string): Promise<void> => {},
   renderSidebar: (): void => {},

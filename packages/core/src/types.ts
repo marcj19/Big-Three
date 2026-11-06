@@ -65,7 +65,7 @@ export type AgentEvent =
   /** `partial` marks streaming deltas; non-partial text is a complete assistant message. */
   | { type: 'text'; text: string; partial?: boolean }
   | { type: 'tool_call'; name: string; input?: unknown }
-  | { type: 'tool_result'; name?: string; isError?: boolean }
+  | { type: 'tool_result'; name?: string; isError?: boolean; exitCode?: number }
   | ({ type: 'subagent' } & SubagentActivity)
   | ({ type: 'question' } & UserQuestion)
   | { type: 'preview'; url: string }

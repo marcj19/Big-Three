@@ -91,7 +91,7 @@ export const teamMembers = (c: Config = state.config): ProviderId[] => PROVIDERS
 
 /** Label of the model chosen for one provider, as the picker shows it. */
 export function modelLabel(p: ProviderId, pick: Pick): string {
-  if (!pick.model) return 'Padrão';
+  if (!pick.model) return p === 'codex' ? 'Automático' : 'Padrão';
   return state.models[p]?.find((m) => m.id === pick.model)?.label ?? pick.model;
 }
 

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { toolContext } from './tool-context.js';
 import type { Adapter, AgentEvent, McpServerSpec, ProviderId, UserQuestion } from '@aio/core';
 import { peerServerSpec, type PeerServerLaunch } from './peer-launch.js';
 import { buildPrompt } from './prompt.js';
@@ -57,8 +58,8 @@ export class Room {
   }
 
   /** A message from the user (the task, a correction). */
-  async say(text: string, attachments?: RoomAttachment[]): Promise<void> {
-    await this.transcript.append({ author: 'user', text, ...(attachments?.length ? { attachments } : {}) });
+  async say(text: string, attachments?: RoomAttachment[], runId?: string): Promise<void> {
+    await this.transcript.append({ author: 'user', text, ...(attachments?.length ? { attachments } : {}), ...(runId ? { runId } : {}) });
     this.config.onTranscript?.();
   }
 
@@ -216,11 +217,14 @@ export class Room {
             (ev.partial ? partial : whole).push(ev.text);
             emit?.({ type: 'text', provider, text: ev.text, partial: ev.partial === true });
             break;
-          case 'tool_call':
-            emit?.({ type: 'tool_call', provider, name: ev.name });
+          case 'tool_call': {
+            const context = toolContext(ev.name, ev.input, options.cwd ?? this.config.cwd);
+            emit?.({ type: 'tool_call', provider, name: ev.name, ...(context ? { context } : {}) });
             break;
+          }
           case 'tool_result':
-            emit?.({ type: 'tool_result', provider, name: ev.name, isError: ev.isError === true });
+            emit?.({ type: 'tool_result', provider, name: ev.name, isError: ev.isError === true,
+              ...(ev.exitCode !== undefined ? { exitCode: ev.exitCode } : {}) });
             break;
           case 'subagent':
           case 'preview':

@@ -1,5 +1,5 @@
-import type { AppEvent, BrowserState, MessageView, RunRecord, StartRun, WorkspaceDirectory, WorkspaceFile } from '../shared/api.js';
-import { newRunRecord, recordWork } from '../shared/work-trace.js';
+import type { AppEvent, BrowserState, RunRecord, StartRun, WorkspaceDirectory, WorkspaceFile } from '../shared/api.js';
+import { newRunRecord, recordWork, timelineEntries } from '../shared/work-trace.js';
 import { browserUrl } from '../shared/browser-url.js';
 import { api, writeClipboardText } from './bridge.js';
 import { ctx } from './ctx.js';
@@ -18,6 +18,11 @@ let signature = '';
 let historyTicket = 0;
 let wide = false;
 let renderedRun = '';
+const DEFAULT_WIDTH = 360;
+const WIDTH_KEY = 'aio.activity.width';
+let preferredWidth = DEFAULT_WIDTH;
+try { preferredWidth = Number(localStorage.getItem(WIDTH_KEY)) || DEFAULT_WIDTH; } catch { /* Storage may be unavailable. */ }
+let dragStart: { x: number; width: number } | undefined;
 const STATUS = { running: 'Em andamento', ok: 'Concluída', error: 'Com erro', cancelled: 'Cancelada' };
 const ENTRY_STATUS = { running: 'Em andamento', done: 'Concluído', error: 'Erro', cancelled: 'Cancelado', skipped: 'Ignorado' };
 const fail = (err: unknown) => toast(err instanceof Error ? err.message : String(err), 'error');
@@ -26,30 +31,84 @@ const heading = h('h2', {}, 'Atividade');
 const activity = h('section', { class: 'harness-page activity-page', 'aria-label': 'Gerenciamento de execuções' });
 const files = h('section', { class: 'harness-page files-page', 'aria-label': 'Arquivos do projeto', hidden: true });
 const browserPage = h('section', { class: 'harness-page browser-page', 'aria-label': 'Navegador integrado', hidden: true });
-export const harnessEl = h('aside', { class: 'harness', 'aria-label': 'Área de trabalho', hidden: true },
+const expand = h('button', { class: 'btn text', type: 'button', 'aria-pressed': 'false', onClick: () => setWide(!wide) }, 'Ampliar');
+export const harnessEl = h('aside', { class: 'harness', id: 'workbench-panel', 'aria-label': 'Área de trabalho', hidden: true },
   h('header', { class: 'harness-header' }, h('div', {}, h('p', { class: 'harness-eyebrow' }, 'ÁREA DE TRABALHO'), heading),
     h('div', { class: 'harness-controls' },
-      h('button', { class: 'btn text', type: 'button', 'aria-label': 'Ampliar ou reduzir painel', onClick: () => {
-        wide = !wide; harnessEl.closest('.workbench')?.classList.toggle('panel-wide', wide); scheduleBounds();
-      } }, 'Ampliar'),
+      expand,
       h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Fechar área de trabalho', onClick: () => setPanel(undefined) }, icon('x')))),
   h('div', { class: 'harness-tabs', 'aria-label': 'Painéis' }, ...(['activity', 'files', 'browser'] as const).map((id) => h('button', {
     type: 'button', 'data-panel': id, onClick: () => setPanel(id),
   }, id === 'activity' ? 'Atividade' : id === 'files' ? 'Arquivos' : 'Navegador'))), activity, files, browserPage);
 
+export const harnessResize = h('div', {
+  class: 'harness-resizer', hidden: true, role: 'separator', tabindex: '0',
+  'aria-label': 'Largura da área de trabalho', 'aria-orientation': 'vertical', 'aria-controls': 'workbench-panel',
+  title: 'Arraste para ajustar a largura ou use as setas do teclado',
+  onPointerdown: (event: PointerEvent) => {
+    if (event.button !== 0 || dragStart) return;
+    event.preventDefault();
+    dragStart = { x: event.clientX, width: harnessEl.offsetWidth };
+    harnessResize.setPointerCapture(event.pointerId);
+    harnessResize.focus({ preventScroll: true });
+  },
+  onPointermove: (event: PointerEvent) => {
+    if (dragStart && harnessResize.hasPointerCapture(event.pointerId)) setWidth(dragStart.width + dragStart.x - event.clientX);
+  },
+  onLostpointercapture: () => { dragStart = undefined; },
+  onDblclick: () => setWidth(DEFAULT_WIDTH),
+  onKeydown: (event: KeyboardEvent) => {
+    const width = harnessEl.offsetWidth;
+    const widths: Partial<Record<string, number>> = { ArrowLeft: width + 24, ArrowRight: width - 24, Home: 0, End: Infinity };
+    const next = widths[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    setWidth(next);
+  },
+});
+
+function applyWidth(): number {
+  const available = harnessEl.parentElement?.clientWidth ?? window.innerWidth;
+  const min = available < 650 ? 240 : 280;
+  const max = Math.max(min, Math.min(760, available - (available < 650 ? 245 : 370)));
+  const width = Math.min(max, Math.max(min, Math.round(preferredWidth)));
+  harnessEl.style.setProperty('--harness-width', `${width}px`);
+  harnessResize.setAttribute('aria-valuemin', String(min));
+  harnessResize.setAttribute('aria-valuemax', String(max));
+  harnessResize.setAttribute('aria-valuenow', String(width));
+  scheduleBounds();
+  return width;
+}
+
+function setWidth(width: number): void {
+  preferredWidth = width;
+  preferredWidth = applyWidth();
+  try { localStorage.setItem(WIDTH_KEY, String(preferredWidth)); } catch { /* Storage may be unavailable. */ }
+}
+
+function setWide(value: boolean): void {
+  wide = value;
+  harnessEl.closest('.workbench')?.classList.toggle('panel-wide', value);
+  harnessResize.hidden = !panel || value;
+  expand.textContent = value ? 'Restaurar' : 'Ampliar';
+  expand.setAttribute('aria-pressed', String(value));
+  scheduleBounds();
+}
+
 export function harnessToolbar(): HTMLElement {
   return h('div', { class: 'harness-toolbar', 'aria-label': 'Abrir área de trabalho' }, ...([
     ['activity', 'Atividade', 'plan'], ['files', 'Arquivos', 'folder'], ['browser', 'Navegador', 'eye'],
-  ] as const).map(([id, label, mark]) => h('button', { class: 'btn', type: 'button', 'aria-pressed': String(panel === id), onClick: () => togglePanel(id) }, icon(mark, 'sm'), h('span', {}, label))));
+  ] as const).map(([id, label, mark]) => h('button', { class: 'btn', type: 'button', 'aria-label': label, 'aria-pressed': String(panel === id), onClick: () => togglePanel(id) }, icon(mark, 'sm'), h('span', {}, label))));
 }
 export function togglePanel(value: HarnessPanel): void { setPanel(panel === value ? undefined : value); }
 function setPanel(value: HarnessPanel | undefined): void {
   panel = value; harnessEl.hidden = !value;
   harnessEl.closest('.workbench')?.classList.toggle('has-panel', !!value);
   activity.hidden = value !== 'activity'; files.hidden = value !== 'files'; browserPage.hidden = value !== 'browser';
-  heading.textContent = value === 'files' ? 'Seu projeto, por dentro.' : value === 'browser' ? 'Explore sem sair daqui.' : 'Acompanhe o trabalho.';
+  heading.textContent = value === 'files' ? 'Arquivos' : value === 'browser' ? 'Navegador' : 'Atividade';
   for (const button of harnessEl.querySelectorAll<HTMLElement>('[data-panel]')) button.setAttribute('aria-pressed', String(button.dataset.panel === value));
-  if (!value) { wide = false; harnessEl.closest('.workbench')?.classList.remove('panel-wide'); }
+  setWide(!!value && wide);
+  applyWidth();
   ctx.renderTopbar(); renderHarness(); scheduleBounds();
   if (value === 'activity') void refreshHistory();
   if (value === 'browser') void api.browserState().then(onBrowserState).catch(fail);
@@ -70,14 +129,11 @@ export function showRunActivity(id: string): void {
 }
 export function loadHarnessConversation(): void { renderHarness(); void refreshHistory(); }
 export function conversationRuns(): RunRecord[] { return records; }
-export function matchRun(message: MessageView, runs: RunRecord[]): RunRecord | undefined {
-  return runs.filter((run) => run.prompt === message.text.slice(0, 400) && Math.abs(Date.parse(run.startedAt) - Date.parse(message.at)) < 30000)
-    .sort((a, b) => Math.abs(Date.parse(a.startedAt) - Date.parse(message.at)) - Math.abs(Date.parse(b.startedAt) - Date.parse(message.at)))[0];
-}
 export function workCard(run: RunRecord, existing?: HTMLElement): HTMLElement {
-  const el = existing ?? h('section', { class: 'chat-work-card', 'aria-label': 'Resumo do trabalho da equipe' });
-  const newest = run.entries.slice().reverse();
-  const last = newest.find((entry) => !['start', 'finish'].includes(entry.kind));
+  const el = existing ?? h('section', { class: 'chat-work-card', 'aria-label': 'Resumo da execução', 'aria-live': 'off' });
+  const timeline = timelineEntries(run);
+  const newest = timeline.slice().reverse();
+  const last = newest.find((entry) => entry.status === 'running' && entry.kind !== 'phase') ?? newest.find((entry) => !['start', 'finish'].includes(entry.kind));
   const failedConsult = newest.find((entry) => entry.kind === 'consult' && entry.status === 'error');
   const error = newest.find((entry) => entry.kind === 'finish' && entry.status === 'error');
   const waiting = run.entries.some((entry) => entry.kind === 'question' && entry.status === 'running');
@@ -88,17 +144,22 @@ export function workCard(run: RunRecord, existing?: HTMLElement): HTMLElement {
     [run.entries.filter((entry) => entry.kind === 'subagent').length, 'subagente', 'subagentes'],
   ] as const;
   const summary = counts.filter(([count]) => count > 0).map(([count, single, plural]) => `${count} ${count === 1 ? single : plural}`).join(' · ');
-  const key = JSON.stringify([run.status, last, waiting, providers, run.entries.length, run.previewUrl, failedConsult, error]);
+  const recent = timeline.filter((entry) => !['start', 'phase', 'finish'].includes(entry.kind)).slice(-5);
+  const key = JSON.stringify([run.status, last, waiting, providers, summary, recent, run.previewUrl, failedConsult, error]);
   if (el.dataset.view === key) return el;
   el.dataset.view = key;
-  el.replaceChildren(h('div', { class: 'chat-work-head' }, h('span', { class: 'chat-work-avatars' }, ...providers.map((id) => h('span', { class: 'avatar xs', title: NAMES[id] }, providerMark(id)))),
+  const expanded = el.querySelector('details')?.open;
+  keepFocus(el, () => el.replaceChildren(h('div', { class: 'chat-work-head' }, h('span', { class: 'chat-work-avatars' }, ...providers.map((id) => h('span', { class: 'avatar xs', title: NAMES[id] }, providerMark(id)))),
     h('b', {}, run.status === 'running' ? waiting ? 'Aguardando sua resposta' : 'Execução em andamento' : `Execução ${run.status === 'ok' ? 'concluída' : run.status === 'cancelled' ? 'cancelada' : 'com erro'}`)),
-    waiting ? '' : h('p', {}, run.status === 'running' ? last?.detail ?? last?.label ?? 'Preparando a tarefa…' : summary),
+    waiting ? '' : h('p', {}, run.status === 'running' ? [last?.provider && NAMES[last.provider], last?.label ?? 'Preparando a tarefa…', last?.context ?? last?.detail].filter(Boolean).join(' · ') : summary),
     error?.detail ? h('p', {}, error.detail) : '',
     failedConsult?.peer ? h('p', {}, `${NAMES[failedConsult.peer]} · ${failedConsult.detail ?? 'A consulta terminou com erro.'}`) : '',
+    recent.length ? h('details', { class: 'chat-work-recent', open: expanded },
+      h('summary', { 'data-fk': 'recent' }, 'Etapas recentes'),
+      h('ol', {}, ...recent.map((entry) => h('li', {}, [entry.provider && NAMES[entry.provider], entry.label, entry.context, ENTRY_STATUS[entry.status]].filter(Boolean).join(' · '))))) : '',
     h('div', { class: 'chat-work-actions' },
-      h('button', { class: 'btn text', type: 'button', onClick: () => showRunActivity(run.id) }, 'Ver etapas e detalhes'),
-      run.previewUrl ? h('button', { class: 'btn tonal', type: 'button', onClick: () => openProjectPreview(run.previewUrl!) }, 'Abrir prévia') : ''));
+      h('button', { class: 'btn text', type: 'button', 'data-fk': 'details', onClick: () => showRunActivity(run.id) }, 'Ver atividade completa'),
+      run.previewUrl ? h('button', { class: 'btn tonal', type: 'button', 'data-fk': 'preview', onClick: () => openProjectPreview(run.previewUrl!) }, 'Abrir prévia') : '')));
   return el;
 }
 export function onHarnessEvent(event: AppEvent): void {
@@ -148,6 +209,7 @@ function renderActivity(): void {
       onClick: () => void ctx.stopRun(selected.id) }, stopping ? 'Parando…' : 'Parar execução') : '';
     const scroll = activity.scrollTop;
     const sameRun = renderedRun === selected.id;
+    const follow = selected.status === 'running' && (!sameRun || activity.scrollHeight - scroll - activity.clientHeight < 90);
     const open = new Set([...activity.querySelectorAll<HTMLElement>('details[open]')].map((el) => el.dataset.entry));
     renderedRun = selected.id;
     activity.replaceChildren(elsewhere,
@@ -156,13 +218,15 @@ function renderActivity(): void {
         h('div', { class: 'run-overview-top' }, h('span', { class: 'run-badge' }, STATUS[selected.status]), cancel),
         h('p', { class: 'run-prompt' }, selected.prompt),
         h('div', { class: 'run-stats' }, h('span', { 'data-elapsed': selected.id }, `${elapsed}s${selected.status === 'running' ? ' até agora' : ''}`), h('span', {}, `${tokenCount.toLocaleString('pt-BR')} tokens reportados`), h('span', {}, `${selected.entries.filter((e) => e.kind === 'consult').length} consultas`))),
-      h('ol', { class: 'work-timeline', 'aria-label': 'Linha do tempo da execução' }, ...selected.entries.map((entry) => h('li', { class: `work-entry work-${entry.kind} ${entry.status}` },
+      h('ol', { class: 'work-timeline', 'aria-label': 'Linha do tempo da execução' }, ...timelineEntries(selected).map((entry) => h('li', { class: `work-entry work-${entry.kind} ${entry.status}` },
         h('span', { class: 'work-node', 'aria-hidden': 'true' }, entry.provider ? providerMark(entry.provider) : icon(entry.status === 'error' ? 'alert' : 'check', 'sm')),
         h('div', { class: 'work-copy' }, h('div', { class: 'work-title' }, h('b', {}, entry.label), h('span', { class: 'work-time' }, formatTime(entry.at))),
           h('div', { class: 'work-meta' }, entry.provider ? NAMES[entry.provider] : 'Orquestrador', ' · ', ENTRY_STATUS[entry.status]),
+          entry.context ? h('code', { class: 'work-context' }, entry.context) : '',
           entry.detail ? h('p', { class: 'work-detail' }, entry.detail) : '',
-          entry.tool ? h('details', { 'data-entry': String(entry.id), open: sameRun && open.has(String(entry.id)) }, h('summary', {}, 'Detalhes da ferramenta'), h('code', {}, entry.tool)) : '')))));
-    activity.scrollTop = sameRun ? scroll : 0;
+          entry.tool ? h('details', { 'data-entry': String(entry.id), open: sameRun && open.has(String(entry.id)) },
+            h('summary', { 'data-fk': `tool-${entry.id}` }, 'Detalhes da ferramenta'), h('code', {}, entry.tool)) : '')))));
+    activity.scrollTop = follow ? activity.scrollHeight : sameRun ? scroll : 0;
   });
 }
 
@@ -276,7 +340,7 @@ export function openBrowser(input: string): void {
 }
 export function openProjectPreview(url: string): void {
   wide = false;
-  harnessEl.closest('.workbench')?.classList.remove('panel-wide');
+  setWide(false);
   openBrowser(url);
 }
 function onBrowserState(value: BrowserState): void { browsing = value; renderBrowser(); scheduleBounds(); }
@@ -318,6 +382,7 @@ export function initHarness(): void {
     if (panel === 'activity' && run?.status === 'running' && el?.dataset.elapsed === run.id) el.textContent = `${Math.max(0, Math.round((Date.now() - Date.parse(run.startedAt)) / 1000))}s até agora`;
   }, 1000);
   new ResizeObserver(scheduleBounds).observe(browserViewport);
+  if (harnessEl.parentElement) new ResizeObserver(applyWidth).observe(harnessEl.parentElement);
   new MutationObserver(scheduleBounds).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'hidden'] });
   window.addEventListener('resize', scheduleBounds);
   document.addEventListener('visibilitychange', scheduleBounds);

@@ -2,18 +2,19 @@ import type { MessageView, PendingQuestion, ProviderId, StepKind } from '../shar
 import { splitQuestion, visibleReply } from '@aio/room/question';
 import { api, writeClipboardText } from './bridge.js';
 import { ctx } from './ctx.js';
-import { clear, formatTime, h, renderRichText, syncChildren } from './dom.js';
+import { clear, formatTime, h, keepFocus, renderRichText, syncChildren } from './dom.js';
 import { normalizeChatMarkdown } from './markdown.js';
 import { icon, providerMark } from './icons.js';
 import { NAMES, PROVIDERS, ready, saveConfig, STARTERS, state, type LiveTurn } from './state.js';
-import { toast } from './ui.js';
+import { openDialog, toast } from './ui.js';
 import { renderOffice } from './office.js';
 import { appearance, setAppearance } from './theme.js';
-import { harnessToolbar, conversationRuns, workCard, matchRun, activeRunRecord, showRunActivity } from './harness.js';
-import { toolLabel } from '../shared/work-trace.js';
+import { harnessToolbar, conversationRuns, workCard, activeRunRecord, showRunActivity } from './harness.js';
+import { runsByMessage, toolLabel } from '../shared/work-trace.js';
 
 export const topbarEl = h('header', { class: 'topbar' });
-const runStatus = h('div', { class: 'run-live-status', 'aria-live': 'polite' });
+export const runAnnouncement = h('p', { class: 'sr-only', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
+const runStatus = h('div', { class: 'run-live-status' });
 const questions = h('div', { class: 'run-questions' });
 export const runHeaderEl = h('section', { class: 'run-live-header', 'aria-label': 'Execução em andamento', hidden: true }, runStatus, questions);
 export const messagesEl = h('div', { class: 'messages', role: 'log', 'aria-live': 'polite', 'aria-relevant': 'additions', 'aria-label': 'Mensagens da conversa', tabindex: '-1' });
@@ -22,7 +23,39 @@ messagesEl.append(column);
 
 // ---------- top bar ----------
 
-let editing = false;
+export function renameChat(id: string, title: string): void {
+  const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+  const focusKey = opener?.dataset.fk;
+  openDialog({ label: 'Renomear conversa', narrow: true, onClose: () => {
+    if (focusKey && !opener?.isConnected) document.querySelector<HTMLElement>(`[data-fk="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
+  }, build: (close) => {
+    const input = h('input', { id: 'rename-chat-title', value: title, maxlength: 120, required: true, autofocus: true });
+    const save = h('button', { class: 'btn primary', type: 'submit' }, 'Salvar');
+    const error = h('p', { class: 'run-question-error', role: 'alert' });
+    return h('form', { class: 'dialog-pad', onSubmit: async (event: Event) => {
+      event.preventDefault();
+      if (save.disabled) return;
+      const next = input.value.trim();
+      if (!next) { error.textContent = 'Digite um título.'; input.focus(); return; }
+      save.disabled = true;
+      try {
+        await api.renameConversation(id, next);
+        if (state.current?.meta.id === id) state.current.meta.title = next;
+        renderTopbar();
+        close();
+        void ctx.refreshConversations().catch((err: Error) => toast(err.message, 'error'));
+        toast('Conversa renomeada.', 'success');
+      } catch (err) {
+        error.textContent = (err as Error).message;
+        save.disabled = false;
+      }
+    } },
+    h('h2', {}, 'Renomear conversa'),
+    h('label', { class: 'field', for: input.id }, 'Título da conversa', input),
+    error,
+    h('div', { class: 'row-end' }, h('button', { class: 'btn', type: 'button', onClick: close }, 'Cancelar'), save));
+  } });
+}
 
 export function renderTopbar(): void {
   clear(topbarEl);
@@ -44,55 +77,10 @@ export function renderTopbar(): void {
     return;
   }
   const subtitle = h('div', { class: 'subtitle', title: meta.cwd }, icon('folder', 'sm'), h('span', {}, meta.cwd));
-  if (editing) {
-    const input = h('input', {
-      class: 'title-input',
-      value: meta.title,
-      'aria-label': 'Título da conversa',
-      maxlength: '120',
-      onKeydown: (e: KeyboardEvent) => {
-        if (e.key === 'Enter') void commit(input.value);
-        if (e.key === 'Escape') stop();
-      },
-      onBlur: () => void commit(input.value),
-    });
-    topbarEl.append(h('div', { class: 'titles' }, h('h1', {}, input), subtitle));
-    queueMicrotask(() => {
-      input.focus();
-      input.select();
-    });
-  } else {
-    topbarEl.append(
-      h(
-        'div',
-        { class: 'titles' },
-        h('h1', {}, h('button', { class: 'title-btn', type: 'button', title: 'Clique para renomear', onClick: () => { editing = true; renderTopbar(); } }, meta.title)),
-        subtitle,
-      ),
-    );
-  }
-
-  topbarEl.append(harnessToolbar(), modeButton());
-
-  function stop() {
-    editing = false;
-    renderTopbar();
-  }
-  async function commit(value: string) {
-    if (!editing) return;
-    editing = false;
-    const title = value.trim();
-    if (title && title !== meta!.title) {
-      try {
-        await api.renameConversation(meta!.id, title);
-        meta!.title = title;
-        await ctx.refreshConversations();
-      } catch (err) {
-        toast((err as Error).message, 'error');
-      }
-    }
-    renderTopbar();
-  }
+  topbarEl.append(h('div', { class: 'titles' },
+    h('div', { class: 'chat-title-row' }, h('h1', { title: meta.title }, meta.title),
+      h('button', { class: 'btn text rename-chat', type: 'button', 'aria-label': 'Renomear conversa', 'data-fk': `rename-top-${meta.id}`,
+        onClick: () => renameChat(meta.id, meta.title) }, icon('pencil', 'sm'), 'Renomear')), subtitle), harnessToolbar(), modeButton());
 }
 
 function toggleSidebar(): void {
@@ -213,8 +201,13 @@ function renderRunHeader(): void {
     : step ? `Etapa ${step.index + 1} de ${step.total} · ${STEP_NAMES[step.kind]}`
       : run ? 'Execução em andamento' : 'Enviando tarefa…';
   const lead = run?.lead ?? pending?.lead;
+  if (run || pending) {
+    const announcement = [caption, ...participants.map((turn) => `${NAMES[turn.provider]}: ${turn.note ?? 'Trabalhando…'}`),
+      ...active.slice(0, 2).map((entry) => entry.detail ?? entry.label)].join('. ');
+    if (runAnnouncement.textContent !== announcement) runAnnouncement.textContent = announcement;
+  }
   const signature = JSON.stringify([run?.runId, elsewhere?.runId, caption, lead, participants.map((turn) => [turn.provider, turn.note]), shown, active.length, delegated.length]);
-  if (runStatus.dataset.view !== signature) {
+  if (runStatus.dataset.view !== signature) keepFocus(runStatus, () => {
     runStatus.dataset.view = signature;
     runStatus.replaceChildren();
     if (elsewhere) {
@@ -223,13 +216,13 @@ function renderRunHeader(): void {
       runStatus.append(
         h('div', { class: 'run-live-heading' },
           h('b', {}, caption),
-          run ? h('button', { class: 'btn text', type: 'button', onClick: () => showRunActivity(run.runId) }, 'Ver atividade') : ''),
+          run ? h('button', { class: 'btn text', type: 'button', 'data-fk': 'show-activity', onClick: () => showRunActivity(run.runId) }, 'Ver atividade') : ''),
         h('div', { class: 'run-live-people' },
           ...(participants.length ? participants.map((turn) => h('span', { class: 'run-live-chip' }, avatar(turn.provider), h('b', {}, NAMES[turn.provider]), h('span', {}, turn.note ?? 'Trabalhando…')))
             : [h('span', { class: 'run-live-chip' }, avatar(step?.provider ?? lead), h('b', {}, NAMES[step?.provider ?? lead]), h('span', {}, run?.questions.length ? 'Aguardando resposta' : run ? 'Preparando a próxima ação' : 'Modelo escolhido'))])),
       );
       if (delegated.length) runStatus.append(h('div', { class: 'run-live-delegated' },
-        h('b', {}, `Subagentes · ${active.length} em andamento`),
+        h('b', {}, `Consultas e subagentes · ${active.length} em andamento`),
         h('div', { class: 'run-live-people' }, ...shown.map((entry) => {
           const provider = entry.peer ?? entry.provider!;
           const title = entry.peer ? NAMES[provider] : entry.label;
@@ -237,7 +230,7 @@ function renderRunHeader(): void {
           return h('span', { class: 'run-live-chip delegated', title: detail }, avatar(provider), h('b', {}, title), h('span', {}, detail));
         }))));
     }
-  }
+  });
   const question = run?.questions[0];
   if (questions.dataset.id !== (question?.id ?? '')) {
     questions.dataset.id = question?.id ?? '';
@@ -351,13 +344,15 @@ export function renderMessages(instant = false): void {
   if (!conv || (conv.messages.length === 0 && !run && !pending)) {
     items.push({ key: 'empty', create: emptyState });
   } else {
-    const messages = pending ? [...conv.messages, pending.message] : conv.messages;
+    const messages = pending && !conv.messages.some((message) => message.runId && message.runId === pending.message.runId)
+      ? [...conv.messages, pending.message] : conv.messages;
+    const records = runsByMessage(messages, conversationRuns());
     for (const shown of group(messages)) {
       if (shown.kind === 'message') {
         const optimistic = shown.message === pending?.message;
         items.push({ key: optimistic ? `pending:${conv.meta.id}` : `m:${conv.meta.id}:${shown.message.index}`, create: () => messageNode(shown.message) });
         if (shown.message.author === 'user') {
-          const record = optimistic && run ? activeRunRecord() : matchRun(shown.message, conversationRuns());
+          const record = records.get(shown.message);
           if (record) items.push({ key: `run:${record.id}`, create: () => workCard(record), update: (el) => workCard(record, el) });
         }
       }

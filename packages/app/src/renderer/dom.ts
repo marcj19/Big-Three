@@ -37,9 +37,15 @@ export function keepFocus(region: Element, render: () => void): void {
  */
 export function syncChildren(container: Element, items: { key: string; create: () => HTMLElement; update?: (el: HTMLElement) => void }[]): void {
   const existing = new Map<string, HTMLElement>();
-  for (const child of Array.from(container.children)) if (child instanceof HTMLElement && child.dataset.key) existing.set(child.dataset.key, child);
+  for (const child of Array.from(container.children)) if (child instanceof HTMLElement && child.dataset.key) {
+    if (existing.has(child.dataset.key)) child.remove();
+    else existing.set(child.dataset.key, child);
+  }
   let previous: Element | null = null;
+  const placed = new Set<string>();
   for (const item of items) {
+    if (placed.has(item.key)) continue;
+    placed.add(item.key);
     let el = existing.get(item.key);
     if (el) {
       existing.delete(item.key);

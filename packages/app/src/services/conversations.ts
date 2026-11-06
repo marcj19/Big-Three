@@ -137,7 +137,7 @@ export class ConversationStore {
 
   async messages(id: string): Promise<MessageView[]> {
     return (await this.transcript(id).list()).map((m) => ({ index: m.index, author: m.author, text: m.text, at: m.at,
-      ...(m.attachments?.length ? { attachments: m.attachments.map((file) => file.name) } : {}) }));
+      ...(m.attachments?.length ? { attachments: m.attachments.map((file) => file.name) } : {}), ...(m.runId ? { runId: m.runId } : {}) }));
   }
 
   async saveAttachments(id: string, uploads: AttachmentUpload[]): Promise<RoomAttachment[]> {

@@ -1,6 +1,6 @@
 import { ATTACHMENT_ONLY_PROMPT, type AppEvent, type ProviderId } from '../shared/api.js';
 import { api, onEvent } from './bridge.js';
-import { messagesEl, renderMessages, renderTopbar, runHeaderEl, scrollToEnd, topbarEl } from './chat.js';
+import { messagesEl, renameChat, renderMessages, renderTopbar, runAnnouncement, runHeaderEl, scrollToEnd, topbarEl } from './chat.js';
 import { clearDraftFiles, composerEl, draftFiles, draftKey, encodeAttachment, focusComposer, promptEl, renderComposer, setPrompt } from './composer.js';
 import { ctx } from './ctx.js';
 import { h } from './dom.js';
@@ -10,7 +10,7 @@ import { buildSpec, canLead, loadConfig, NAMES, PROVIDERS, ready, saveConfig, st
 import { loadAppearance } from './theme.js';
 import { openDialog, toast } from './ui.js';
 import { initOffice, officeEl, onOfficeEvent, startOfficeRun } from './office.js';
-import { harnessEl, initHarness, onHarnessEvent, openBrowser, openProjectPreview, renderHarness, startHarnessRun, togglePanel, loadHarnessConversation } from './harness.js';
+import { harnessEl, harnessResize, initHarness, onHarnessEvent, openBrowser, openProjectPreview, renderHarness, startHarnessRun, togglePanel, loadHarnessConversation } from './harness.js';
 import { toolLabel } from '../shared/work-trace.js';
 import { onUpdate } from './updates.js';
 
@@ -23,7 +23,7 @@ const root = document.getElementById('app')!;
 root.append(
   h('a', { class: 'skip', href: '#prompt', onClick: (e: Event) => { e.preventDefault(); promptEl.focus(); } }, 'Ir para a mensagem'),
   h('div', { class: 'shell' }, sidebarEl, h('main', { class: 'main', id: 'main' }, topbarEl,
-    h('div', { class: 'workbench' }, h('div', { class: 'workspace' }, officeEl, h('section', { class: 'chat-pane', 'aria-label': 'Chat' }, runHeaderEl, messagesEl, composerEl)), harnessEl))),
+    h('div', { class: 'workbench' }, h('div', { class: 'workspace' }, officeEl, h('section', { class: 'chat-pane', 'aria-label': 'Chat' }, runAnnouncement, runHeaderEl, messagesEl, composerEl)), harnessResize, harnessEl))),
 );
 initOffice();
 initHarness();
@@ -116,7 +116,9 @@ async function openConversation(id: string, keepScroll = false): Promise<void> {
 function reconcilePending(): void {
   const pending = state.pending;
   if (!pending || pending.conversationId !== state.current?.meta.id) return;
-  if (state.current.messages.some((message) => message.index >= pending.message.index && message.author === 'user' && message.text === pending.message.text)) {
+  if (state.current.messages.some((message) => message.author === 'user' && (pending.message.runId
+    ? message.runId === pending.message.runId
+    : message.index >= pending.message.index && message.text === pending.message.text))) {
     state.pending = undefined;
   }
 }
@@ -240,6 +242,7 @@ async function send(): Promise<void> {
     renderMessages();
     scrollToEnd();
     const { runId } = await api.startRun({ ...input, attachments });
+    if (state.pending?.conversationId === conversationId) state.pending.message.runId = runId;
     clearDraftFiles(key);
     starting = undefined;
     state.run = { runId, conversationId, lead, live: [], questions: [], activePeers: new Set() };
@@ -320,7 +323,7 @@ function onAppEvent(ev: AppEvent): void {
       if (turn) { turn.text = e.partial ? turn.text + e.text : e.text; turn.note = 'Escrevendo a resposta'; turn.tools = []; }
     } else if (e.type === 'tool_call') {
       const turn = live.find((l) => l.provider === e.provider);
-      if (turn) { turn.tools = [e.name]; turn.note = toolLabel(e.name); }
+      if (turn) { turn.tools = [e.name]; turn.note = [toolLabel(e.name), e.context].filter(Boolean).join(' · '); }
     } else if (e.type === 'tool_result') {
       const turn = live.find((l) => l.provider === e.provider);
       if (turn) { turn.tools = []; turn.note = e.isError ? 'Verificando erro de ferramenta' : 'Conferindo o resultado'; }
@@ -359,6 +362,8 @@ function onAppEvent(ev: AppEvent): void {
     state.run = undefined;
     if (state.pending?.conversationId === ev.conversationId && ev.outcome.status === 'error') state.pending = undefined;
     const o = ev.outcome;
+    if (state.current?.meta.id === ev.conversationId) runAnnouncement.textContent = o.status === 'ok' ? 'Execução concluída.'
+      : o.status === 'cancelled' ? 'Execução cancelada.' : `Execução com erro. ${o.error ?? ''}`.trim();
     if (o.status === 'ok') {
       const verdict = o.verdict === 'approve' ? ' O revisor aprovou.' : o.verdict === 'changes' ? ' O revisor ainda pede mudanças.' : '';
       toast(`Concluído.${verdict}`, 'success');
@@ -391,6 +396,7 @@ Object.assign(ctx, {
   refreshConversations,
   openConversation,
   newConversation,
+  renameChat,
   send,
   stopRun,
   renderSidebar,

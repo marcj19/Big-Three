@@ -40,12 +40,13 @@ export class FileTranscript implements TranscriptStore {
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue;
       try {
-        const o = JSON.parse(line) as { author?: unknown; text?: unknown; at?: unknown; attachments?: unknown };
+        const o = JSON.parse(line) as { author?: unknown; text?: unknown; at?: unknown; attachments?: unknown; runId?: unknown };
         if (typeof o.author !== 'string' || !AUTHORS.has(o.author) || typeof o.text !== 'string') continue;
         const attachments = o.author === 'user' && Array.isArray(o.attachments)
           ? o.attachments.filter((file) => typeof file?.name === 'string' && typeof file?.path === 'string' && path.isAbsolute(file.path)) : [];
         messages.push({ index: messages.length + 1, author: o.author as Author, text: o.text, at: typeof o.at === 'string' ? o.at : '',
-          ...(attachments.length ? { attachments } : {}) });
+          ...(attachments.length ? { attachments } : {}),
+          ...(o.author === 'user' && typeof o.runId === 'string' ? { runId: o.runId } : {}) });
       } catch {
         // A torn or foreign line must not take the whole room down.
       }

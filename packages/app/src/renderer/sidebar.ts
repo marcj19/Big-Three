@@ -46,6 +46,8 @@ function conversationList(): HTMLElement {
         'li',
         { class: 'conv', 'aria-current': active ? 'true' : undefined },
         h('button', { class: 'conv-main', type: 'button', 'data-fk': `conv-${c.id}`, title: `${c.title} · ${relativeTime(c.updatedAt)}`, onClick: () => void ctx.openConversation(c.id) }, c.title),
+        h('button', { class: 'icon-btn sm conv-rename', type: 'button', 'data-fk': `rename-${c.id}`,
+          'aria-label': `Renomear a conversa ${c.title}`, title: 'Renomear', onClick: () => ctx.renameChat(c.id, c.title) }, icon('pencil', 'sm')),
         h(
           'button',
           {

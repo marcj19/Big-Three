@@ -1,5 +1,6 @@
 import type { AgentEvent, Access, AuthStatus, ModelOption, RunRequest } from '../types.js';
-import { CliAdapter, DEFAULT_MODEL, isRecord, num, str, type BuiltInvocation, type Parser } from './base.js';
+import { assertSafeChoice, CliAdapter, isRecord, num, str, type BuiltInvocation, type Parser } from './base.js';
+import { readCodexAppServer } from '../codex-app-server.js';
 import { readCodexQuota } from '../codex-quota.js';
 import { commandPreviews } from '../preview.js';
 
@@ -32,9 +33,26 @@ export class CodexAdapter extends CliAdapter {
   protected override readonly loginArgs = ['login'];
   override readonly efforts = ['low', 'medium', 'high'] as const;
 
-  /** Codex has no model-listing command; leave the account default and let the picker take a typed name. */
+  /** Use the same catalog as the CLI picker, and leave an option to use the CLI configuration as-is. */
   override async listModels(): Promise<ModelOption[]> {
-    return [DEFAULT_MODEL];
+    const automatic = { id: '', label: 'Automático (padrão do Codex)' };
+    try {
+      const pages = await readCodexAppServer(await this.command(), this.env(), 'model/list');
+      const models = new Map<string, ModelOption>();
+      for (const page of pages) {
+        if (!isRecord(page) || !Array.isArray(page.data)) continue;
+        for (const model of page.data) {
+          if (!isRecord(model) || model.hidden === true) continue;
+          const id = str(model.model) ?? str(model.id);
+          if (!id || models.has(id)) continue;
+          try { assertSafeChoice({ model: id }); } catch { continue; }
+          models.set(id, { id, label: str(model.displayName)?.trim().slice(0, 100) || id });
+        }
+      }
+      return [automatic, ...models.values()];
+    } catch {
+      return [automatic];
+    }
   }
 
   protected override async checkAuth(): Promise<AuthStatus> {
@@ -114,7 +132,8 @@ export class CodexAdapter extends CliAdapter {
             lastMessage = str(item.text)!;
             events.push({ type: 'text', text: lastMessage });
           } else if (kind === 'command_execution') {
-            events.push({ type: 'tool_result', name: 'shell', isError: typeof item.exit_code === 'number' && item.exit_code !== 0 });
+            const exitCode = num(item.exit_code);
+            events.push({ type: 'tool_result', name: 'shell', isError: !!exitCode, ...(exitCode ? { exitCode } : {}) });
           } else if (kind === 'file_change') {
             // Some CLI versions only announce file changes once the patch has finished.
             if (!startedItems.delete(str(item.id) ?? '')) events.push({ type: 'tool_call', name: 'apply_patch' });

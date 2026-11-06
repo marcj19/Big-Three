@@ -107,7 +107,7 @@ export class RunManager {
     const { deps } = this;
     const lead = spec.lead.provider;
     const meta = await deps.store.get(input.conversationId);
-    await room.say(input.prompt, attachments);
+    await room.say(input.prompt, attachments, runId);
 
     const team = spec.consultTeam ? Object.entries(teamOf(spec.team, lead)) : [];
     if (team.length) {
@@ -206,7 +206,7 @@ export class RunManager {
       // Desktop tasks can run long commands and are always stoppable from the UI.
       const common = { cwd, signal: abort.signal, timeoutMs: deps.timeoutMs ?? 0, withPeerTools: input.peerTools, mcpServers: db ? [db] : undefined };
       if (spec.kind === 'chat') {
-        await room.say(input.prompt, attachments);
+        await room.say(input.prompt, attachments, runId);
         const r = await room.turn(spec.providers, "Answer the user's latest message.", { ...common, access: spec.access });
         outcome = { status: r.status, final: r.text, error: r.error };
       } else if (spec.kind === 'review') {

@@ -213,7 +213,7 @@ const select = (label: string, value: string, options: { value: string; label: s
 
 /** Model, and effort where the CLI takes one, for one provider. `holder` is what is being edited. */
 function modelControls(p: ProviderId, holder: Pick, label: string, onChange: () => void): HTMLElement[] {
-  const list = state.models[p] ?? [{ id: '', label: 'Padrão da conta' }];
+  const list = state.models[p] ?? [{ id: '', label: p === 'codex' ? 'Automático (padrão do Codex)' : 'Padrão da conta' }];
   const custom = holder.customModel === true || (!!holder.model && !list.some((o) => o.id === holder.model));
   const out: HTMLElement[] = [
     select(
@@ -244,6 +244,9 @@ function modelControls(p: ProviderId, holder: Pick, label: string, onChange: () 
         },
       }),
     );
+  }
+  if (p === 'codex' && state.models.codex && !list.some((option) => option.id)) {
+    out.push(h('p', { class: 'muted small' }, 'A lista de modelos da CLI está indisponível. Use Automático ou digite o identificador em Outro.'));
   }
   const efforts = provider(p)?.efforts ?? [];
   if (efforts.length) {
