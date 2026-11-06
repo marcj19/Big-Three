@@ -37,6 +37,8 @@ export interface RunRequest {
   /** Provider session to continue (only for adapters with `supportsResume`). */
   sessionId?: string;
   systemPrompt?: string;
+  attachmentImages?: string[];
+  attachmentDirectories?: string[];
   mcpServers?: McpServerSpec[];
   signal?: AbortSignal;
   /** Wall-clock limit for the CLI process. Zero disables the timer. */

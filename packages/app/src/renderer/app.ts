@@ -1,7 +1,7 @@
-import type { AppEvent, ProviderId } from '../shared/api.js';
+import { ATTACHMENT_ONLY_PROMPT, type AppEvent, type ProviderId } from '../shared/api.js';
 import { api, onEvent } from './bridge.js';
 import { messagesEl, renderMessages, renderTopbar, runHeaderEl, scrollToEnd, topbarEl } from './chat.js';
-import { composerEl, focusComposer, promptEl, renderComposer, setPrompt } from './composer.js';
+import { clearDraftFiles, composerEl, draftFiles, draftKey, encodeAttachment, focusComposer, promptEl, renderComposer, setPrompt } from './composer.js';
 import { ctx } from './ctx.js';
 import { h } from './dom.js';
 import { installIcons } from './icons.js';
@@ -218,23 +218,29 @@ let starting: { conversationId: string; events: AppEvent[] } | undefined;
 async function send(): Promise<void> {
   if (state.run || state.sending || state.accessChanging) return;
   const text = promptEl.value.trim();
-  if (!text) return void promptEl.focus();
+  const key = draftKey();
+  const files = draftFiles(key);
+  if (!text && !files.length) return void promptEl.focus();
   state.sending = true;
+  renderComposer();
   try {
     if (!state.current && !(await newConversation())) return;
     const conversation = state.current!;
     const conversationId = conversation.meta.id;
     const lead = state.config.lead.provider;
-    const input = { conversationId, prompt: text, spec: buildSpec(state.config), connections: [...state.config.connections],
+    const input = { conversationId, prompt: text || ATTACHMENT_ONLY_PROMPT, spec: buildSpec(state.config), connections: [...state.config.connections],
       peerTools: canLead(lead) && teamMembers().length > 0 };
+    const attachments = files.length ? await Promise.all(files.map(encodeAttachment)) : undefined;
     const request = { conversationId, events: [] as AppEvent[] };
     starting = request;
-    state.pending = { conversationId, lead, message: { index: (conversation.messages.at(-1)?.index ?? 0) + 1, author: 'user', text, at: new Date().toISOString() } };
+    state.pending = { conversationId, lead, message: { index: (conversation.messages.at(-1)?.index ?? 0) + 1, author: 'user', text: input.prompt,
+      at: new Date().toISOString(), attachments: attachments?.map((file) => file.name.trim()) } };
     setPrompt('');
     renderComposer();
     renderMessages();
     scrollToEnd();
-    const { runId } = await api.startRun(input);
+    const { runId } = await api.startRun({ ...input, attachments });
+    clearDraftFiles(key);
     starting = undefined;
     state.run = { runId, conversationId, lead, live: [], questions: [], activePeers: new Set() };
     startHarnessRun(runId, input);
@@ -250,6 +256,28 @@ async function send(): Promise<void> {
     state.sending = false;
     renderComposer();
     renderMessages();
+  }
+}
+
+async function stopRun(runId: string): Promise<void> {
+  const run = state.run?.runId === runId ? state.run : undefined;
+  if (run?.stopping) return;
+  if (run) {
+    run.stopping = true;
+    renderComposer();
+    renderMessages();
+    renderHarness();
+  }
+  try {
+    await api.cancelRun(runId);
+  } catch (err) {
+    if (run && state.run === run) {
+      run.stopping = false;
+      renderComposer();
+      renderMessages();
+      renderHarness();
+    }
+    fail(err);
   }
 }
 
@@ -364,6 +392,7 @@ Object.assign(ctx, {
   openConversation,
   newConversation,
   send,
+  stopRun,
   renderSidebar,
   renderTopbar,
   renderMessages,

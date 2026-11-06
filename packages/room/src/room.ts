@@ -1,9 +1,10 @@
+import path from 'node:path';
 import type { Adapter, AgentEvent, McpServerSpec, ProviderId, UserQuestion } from '@aio/core';
 import { peerServerSpec, type PeerServerLaunch } from './peer-launch.js';
 import { buildPrompt } from './prompt.js';
 import { FileTranscript, MemoryTranscript } from './transcript.js';
 import { looksRateLimited, UsageTracker } from './usage.js';
-import type { RoomEvent, RoomMessage, TranscriptStore, TurnOptions, TurnResult } from './types.js';
+import type { RoomAttachment, RoomEvent, RoomMessage, TranscriptStore, TurnOptions, TurnResult } from './types.js';
 import { splitQuestion } from './question.js';
 
 const DEFAULT_TIMEOUT_MS = 600_000;
@@ -56,8 +57,8 @@ export class Room {
   }
 
   /** A message from the user (the task, a correction). */
-  async say(text: string): Promise<void> {
-    await this.transcript.append({ author: 'user', text });
+  async say(text: string, attachments?: RoomAttachment[]): Promise<void> {
+    await this.transcript.append({ author: 'user', text, ...(attachments?.length ? { attachments } : {}) });
     this.config.onTranscript?.();
   }
 
@@ -103,7 +104,7 @@ export class Room {
     const notes: string[] = [];
     let last: TurnResult | undefined;
     for (const provider of candidates) {
-      if (options.signal?.aborted) return last ?? { ...failed(provider, 'Cancelled'), status: 'cancelled' };
+      if (options.signal?.aborted) return { ...(last ?? failed(provider, 'Cancelled')), status: 'cancelled', text: '', error: undefined };
       if (!this.config.adapters[provider]) {
         this.config.onEvent?.({ type: 'skipped', provider, reason: 'not configured' });
         notes.push(`${provider}: not configured`);
@@ -161,12 +162,16 @@ export class Room {
     const extra = adapter.supportsMcp ? (options.mcpServers ?? []) : [];
     const mcpServers = peer || extra.length ? [...extra, ...(peer ?? [])] : undefined;
     const resumed = options.sessionId !== undefined;
+    const transcript = resumed ? snapshot.filter((m) => m.index > (options.sinceIndex ?? 0)) : snapshot;
+    const latestUser = transcript.slice().reverse().find((m) => m.author === 'user');
+    const attachmentImages = latestUser?.attachments?.filter((file) => /\.(?:png|jpe?g|gif|webp)$/i.test(file.path)).map((file) => file.path);
+    const attachmentDirectories = [...new Set(snapshot.flatMap((message) => message.attachments?.map((file) => path.dirname(file.path)) ?? []))];
     const { systemPrompt, prompt } = buildPrompt({
       self: provider,
       participants: this.providers,
       team: peer ? this.providers.filter((p) => p !== provider && (this.config.peerServer?.team ? p in this.config.peerServer.team : true)) : undefined,
       // A resumed session already remembers everything up to its last turn: only what is new needs to be said.
-      transcript: resumed ? snapshot.filter((m) => m.index > (options.sinceIndex ?? 0)) : snapshot,
+      transcript,
       resumed,
       instruction,
       role: provider === 'gemini' && (options.access ?? 'read-only') === 'read-only'
@@ -197,6 +202,8 @@ export class Room {
         effort: options.effort || undefined,
         sessionId: options.sessionId || undefined,
         mcpServers,
+        ...(attachmentImages?.length ? { attachmentImages } : {}),
+        ...(attachmentDirectories.length ? { attachmentDirectories } : {}),
         signal: options.signal,
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       });
@@ -251,6 +258,7 @@ export class Room {
       status = 'error';
       error = err instanceof Error ? err.message : String(err);
     }
+    if (options.signal?.aborted) status = 'cancelled';
 
     // The CLI's own final answer wins; otherwise what streamed (a whole message beats concatenated deltas).
     const rawText = (doneText ?? whole.at(-1) ?? partial.join('')).trimEnd();

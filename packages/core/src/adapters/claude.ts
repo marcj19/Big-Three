@@ -55,6 +55,7 @@ export class ClaudeAdapter extends CliAdapter {
     if (req.effort) args.push('--effort', req.effort);
     if (req.sessionId) args.push('--resume', req.sessionId);
     if (req.systemPrompt) args.push('--append-system-prompt', req.systemPrompt);
+    for (const dir of req.attachmentDirectories ?? []) args.push('--add-dir', dir);
 
     let cleanup: BuiltInvocation['cleanup'];
     if (req.mcpServers?.length) {

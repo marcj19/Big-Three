@@ -8,6 +8,7 @@ export const ctx = {
   openConversation: async (_id: string, _keepScroll?: boolean): Promise<void> => {},
   newConversation: async (): Promise<boolean> => false,
   send: async (): Promise<void> => {},
+  stopRun: async (_runId: string): Promise<void> => {},
   renderSidebar: (): void => {},
   renderTopbar: (): void => {},
   renderMessages: (): void => {},

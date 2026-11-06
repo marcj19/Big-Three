@@ -1,6 +1,7 @@
 import type { Access, AgentErrorCode, DoneStatus, McpServerSpec, ProviderId, SubagentActivity } from '@aio/core';
 
 export type Author = ProviderId | 'user' | 'system';
+export interface RoomAttachment { name: string; path: string }
 
 export interface RoomMessage {
   /** 1-based position in the transcript; assigned when read, so concurrent writers never collide. */
@@ -8,9 +9,10 @@ export interface RoomMessage {
   author: Author;
   text: string;
   at: string;
+  attachments?: RoomAttachment[];
 }
 
-export type NewMessage = Pick<RoomMessage, 'author' | 'text'>;
+export type NewMessage = Pick<RoomMessage, 'author' | 'text' | 'attachments'>;
 
 /** Where the transcript lives. A file-backed store lets the MCP peer server (another process) share it. */
 export interface TranscriptStore {

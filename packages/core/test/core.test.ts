@@ -153,6 +153,20 @@ describe('runProcess', () => {
     expect(Date.now() - started).toBeLessThan(10_000);
   }, 15_000);
 
+  it.skipIf(process.platform !== 'win32')('stops descendants that keep the CLI output pipe open', async () => {
+    const ac = new AbortController();
+    let pid: number | undefined;
+    const run = async () => {
+      for await (const line of runProcess({ ...base, command: fake('hang-tree'), args: [], signal: ac.signal })) {
+        pid = JSON.parse(line).pid;
+        ac.abort();
+      }
+    };
+    await expect(run()).rejects.toMatchObject({ reason: 'cancelled' });
+    expect(pid).toBeDefined();
+    await vi.waitFor(() => expect(() => process.kill(pid!, 0)).toThrow());
+  }, 15_000);
+
   it('kills a hung process on timeout', async () => {
     const run = async () => {
       for await (const _ of runProcess({ ...base, command: fake('hang'), args: [], timeoutMs: 800 })) void _;

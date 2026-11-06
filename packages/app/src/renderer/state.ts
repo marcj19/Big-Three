@@ -50,6 +50,7 @@ export interface RunState {
   step?: StepEventView;
   questions: PendingQuestion[];
   activePeers: Set<string>;
+  stopping?: boolean;
 }
 
 export const state = {

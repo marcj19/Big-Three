@@ -100,6 +100,7 @@ export interface MessageView {
   author: ProviderId | 'user' | 'system';
   text: string;
   at: string;
+  attachments?: string[];
 }
 
 export type RunSpec =
@@ -119,12 +120,19 @@ export type RunSpec =
 export interface StartRun {
   conversationId: string;
   prompt: string;
+  attachments?: AttachmentUpload[];
   spec: RunSpec;
   /** Database connections the models may query (read-only). Models that cannot take MCP servers ignore them. */
   connections: string[];
   /** Let Claude and Codex ask the other participants questions mid-turn. */
   peerTools: boolean;
 }
+
+export interface AttachmentUpload { name: string; data: string }
+export const ATTACHMENT_COUNT_LIMIT = 8;
+export const ATTACHMENT_FILE_LIMIT = 10 * 1024 * 1024;
+export const ATTACHMENT_TOTAL_LIMIT = 25 * 1024 * 1024;
+export const ATTACHMENT_ONLY_PROMPT = 'Analise os arquivos anexados.';
 
 export interface RunOutcome {
   status: 'ok' | 'error' | 'cancelled';

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { existsSync } from 'node:fs';
 import { assertSafeChoice, createAdapters, type ProviderId } from '@aio/core';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { Team } from './peer-launch.js';
@@ -36,10 +37,23 @@ async function main() {
   if (peers.length === 0) throw new Error('AIO_ROOM_PEERS lists no known provider');
 
   const team = parseTeam(process.env.AIO_ROOM_TEAM);
+  const abort = new AbortController();
+  const lease = process.env.AIO_ROOM_LEASE_FILE;
+  if (lease) {
+    const check = () => { if (!existsSync(lease)) abort.abort(); };
+    check();
+    const timer = setInterval(check, 100);
+    timer.unref();
+    abort.signal.addEventListener('abort', () => clearInterval(timer), { once: true });
+    if (abort.signal.aborted) clearInterval(timer);
+  }
+  process.once('SIGTERM', () => abort.abort());
+  process.once('SIGINT', () => abort.abort());
   const server = createPeerServer({
     team,
     onActivity: process.env.AIO_ROOM_ACTIVITY_FILE ? fileActivitySink(process.env.AIO_ROOM_ACTIVITY_FILE) : undefined,
     self,
+    signal: abort.signal,
     peers,
     adapters: createAdapters(),
     transcript: new FileTranscript(required('AIO_ROOM_FILE')),
@@ -47,6 +61,7 @@ async function main() {
     maxAsks: Math.max(0, Number.parseInt(process.env.AIO_ROOM_MAX_ASKS ?? '6', 10) || 0),
   });
   await server.connect(new StdioServerTransport());
+  server.server.onclose = () => abort.abort();
 }
 
 // stdout carries the MCP protocol, so diagnostics go to stderr.

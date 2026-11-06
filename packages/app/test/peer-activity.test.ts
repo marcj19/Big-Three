@@ -17,6 +17,9 @@ describe('MCP visual activity bridge', () => {
     const journal = await watchPeerActivity((event) => events.push(event));
     const line = JSON.stringify({ self: 'claude', peer: 'gemini', activity: 'thinking' });
     await appendFile(journal.file, `${line}\ninvalid\n{"partial":`);
+    await expect(stat(journal.lease)).resolves.toBeDefined();
+    await journal.cancel();
+    await expect(stat(journal.lease)).rejects.toThrow();
     await journal.close();
     expect(events).toEqual([{ self: 'claude', peer: 'gemini', activity: 'thinking' }]);
     await expect(stat(journal.file)).rejects.toThrow();

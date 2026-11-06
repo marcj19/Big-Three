@@ -25,7 +25,7 @@ export class FileTranscript implements TranscriptStore {
 
   async append(message: NewMessage): Promise<void> {
     await mkdir(path.dirname(this.file), { recursive: true });
-    await appendFile(this.file, JSON.stringify({ author: message.author, text: message.text, at: new Date().toISOString() }) + '\n');
+    await appendFile(this.file, JSON.stringify({ ...message, at: new Date().toISOString() }) + '\n');
   }
 
   async list(): Promise<RoomMessage[]> {
@@ -40,9 +40,12 @@ export class FileTranscript implements TranscriptStore {
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue;
       try {
-        const o = JSON.parse(line) as { author?: unknown; text?: unknown; at?: unknown };
+        const o = JSON.parse(line) as { author?: unknown; text?: unknown; at?: unknown; attachments?: unknown };
         if (typeof o.author !== 'string' || !AUTHORS.has(o.author) || typeof o.text !== 'string') continue;
-        messages.push({ index: messages.length + 1, author: o.author as Author, text: o.text, at: typeof o.at === 'string' ? o.at : '' });
+        const attachments = o.author === 'user' && Array.isArray(o.attachments)
+          ? o.attachments.filter((file) => typeof file?.name === 'string' && typeof file?.path === 'string' && path.isAbsolute(file.path)) : [];
+        messages.push({ index: messages.length + 1, author: o.author as Author, text: o.text, at: typeof o.at === 'string' ? o.at : '',
+          ...(attachments.length ? { attachments } : {}) });
       } catch {
         // A torn or foreign line must not take the whole room down.
       }
@@ -70,7 +73,8 @@ function clip(text: string, max: number): string {
  */
 export function renderTranscript(messages: RoomMessage[], options: Partial<RenderOptions> = {}): string {
   const { budget, perMessage } = { ...DEFAULT_RENDER, ...options };
-  const line = (m: RoomMessage) => `[${m.index}] ${m.author}:\n${clip(m.text, perMessage)}`;
+  const line = (m: RoomMessage) => `[${m.index}] ${m.author}:\n${clip(m.text, perMessage)}${m.attachments?.length
+    ? '\nUser attachments (inspect these local files if relevant):\n' + m.attachments.map((file) => JSON.stringify({ name: file.name, path: file.path })).join('\n') : ''}`;
   if (messages.length === 0) return '(the room is empty)';
 
   const first = messages[0]!;

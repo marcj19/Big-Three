@@ -128,7 +128,8 @@ async function refreshHistory(): Promise<void> {
 function renderActivity(): void {
   if (panel !== 'activity') return;
   const selected = records.find((record) => record.id === chosenRun) ?? records[0];
-  const next = JSON.stringify([state.current?.meta.id, state.run?.runId, selected, records.map((r) => [r.id, r.status])]);
+  const stopping = state.run?.runId === selected?.id && state.run?.stopping === true;
+  const next = JSON.stringify([state.current?.meta.id, state.run?.runId, stopping, selected, records.map((r) => [r.id, r.status])]);
   if (next === signature) return;
   signature = next;
   keepFocus(activity, () => {
@@ -143,7 +144,8 @@ function renderActivity(): void {
     }
     const tokenCount = selected.inputTokens + selected.outputTokens;
     const elapsed = Math.max(0, Math.round((Date.parse(selected.endedAt ?? new Date().toISOString()) - Date.parse(selected.startedAt)) / 1000));
-    const cancel = selected.status === 'running' ? h('button', { class: 'btn danger', type: 'button', onClick: () => void api.cancelRun(selected.id).catch(fail) }, 'Parar execução') : '';
+    const cancel = selected.status === 'running' ? h('button', { class: 'btn danger', type: 'button', disabled: stopping,
+      onClick: () => void ctx.stopRun(selected.id) }, stopping ? 'Parando…' : 'Parar execução') : '';
     const scroll = activity.scrollTop;
     const sameRun = renderedRun === selected.id;
     const open = new Set([...activity.querySelectorAll<HTMLElement>('details[open]')].map((el) => el.dataset.entry));

@@ -12,7 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configDir } from '@aio/db-broker';
 import { AppService } from '../services/app-service.js';
-import { API_METHODS, type AppEvent } from '../shared/api.js';
+import { API_METHODS, ATTACHMENT_TOTAL_LIMIT, type AppEvent } from '../shared/api.js';
 import { demoAdapters } from './demo-adapters.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -42,12 +42,12 @@ const tokenOk = (given: string | undefined | null) => {
   return a.length === b.length && timingSafeEqual(a, b);
 };
 
-async function readBody(req: http.IncomingMessage): Promise<string> {
+async function readBody(req: http.IncomingMessage, limit = 1_000_000): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req as AsyncIterable<Buffer>) {
     size += chunk.length;
-    if (size > 1_000_000) throw new Error('Request too large');
+    if (size > limit) throw new Error('Request too large');
     chunks.push(chunk);
   }
   return Buffer.concat(chunks).toString('utf8');
@@ -74,7 +74,8 @@ const server = http.createServer(async (req, res) => {
       if (!tokenOk(req.headers['x-aio-token'] as string | undefined)) return send(403, { ok: false, error: 'Bad token' });
       const method = url.pathname.slice('/api/'.length);
       if (!(API_METHODS as readonly string[]).includes(method)) return send(404, { ok: false, error: 'Unknown method' });
-      const { args } = JSON.parse((await readBody(req)) || '{}') as { args?: unknown[] };
+      const limit = method === 'startRun' ? Math.ceil(ATTACHMENT_TOTAL_LIMIT / 3) * 4 + 1_000_000 : undefined;
+      const { args } = JSON.parse((await readBody(req, limit)) || '{}') as { args?: unknown[] };
       const result = await (service[method as (typeof API_METHODS)[number]] as (...a: unknown[]) => Promise<unknown>)(...(Array.isArray(args) ? args : []));
       return send(200, { ok: true, result: result ?? null });
     }

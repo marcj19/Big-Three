@@ -14,10 +14,13 @@ export function parsePeerActivity(line: string): PeerActivity | undefined {
   try { const result = schema.safeParse(JSON.parse(line)); return result.success && result.data.self !== result.data.peer ? result.data : undefined; } catch { return undefined; }
 }
 /** A bounded, per-run bridge from the MCP process. It carries visual state only. */
-export async function watchPeerActivity(emit: (event: PeerActivity) => void): Promise<{ file: string; close(): Promise<void> }> {
+export async function watchPeerActivity(emit: (event: PeerActivity) => void): Promise<{ file: string; lease: string; cancel(): Promise<void>; close(): Promise<void> }> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'aio-peer-activity-'));
   const file = path.join(dir, 'activity.jsonl');
+  const lease = path.join(dir, 'active');
   await writeFile(file, '', { mode: 0o600 });
+  await writeFile(lease, '', { mode: 0o600 });
+  const cancel = () => unlink(lease).catch(() => {});
   let offset = 0;
   let pending: Promise<void> | undefined;
   const drain = async () => {
@@ -32,7 +35,8 @@ export async function watchPeerActivity(emit: (event: PeerActivity) => void): Pr
   };
   const timer = setInterval(() => { if (!pending) pending = drain().finally(() => { pending = undefined; }); }, 120);
   timer.unref();
-  return { file, async close() {
+  return { file, lease, cancel, async close() {
+    await cancel();
     clearInterval(timer); await pending; await drain();
     await unlink(file).catch(() => {}); await rmdir(dir).catch(() => {});
   } };

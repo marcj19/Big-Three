@@ -54,6 +54,7 @@ export class CodexAdapter extends CliAdapter {
     }
     if (req.model) args.push('--model', req.model);
     if (req.effort) args.push('-c', `model_reasoning_effort=${toml(req.effort)}`);
+    for (const image of req.attachmentImages ?? []) args.push('--image', image);
     for (const s of req.mcpServers ?? []) {
       if (!/^[A-Za-z0-9_-]+$/.test(s.name)) throw new Error(`Invalid MCP server name: ${s.name.slice(0, 30)}`);
       args.push('-c', `mcp_servers.${s.name}.command=${toml(s.command)}`);

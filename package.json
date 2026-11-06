@@ -1,6 +1,6 @@
 {
   "name": "big-three",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "One chat for Claude, Gemini and Codex: pick a model, talk, and it consults the others when it needs to. Includes a read-only database broker.",
   "license": "MIT",

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { FileTranscript } from '@aio/room';
-import type { ConversationMeta, MessageView, ProviderId } from '../shared/api.js';
+import { FileTranscript, type RoomAttachment } from '@aio/room';
+import { ATTACHMENT_FILE_LIMIT, ATTACHMENT_TOTAL_LIMIT, type AttachmentUpload, type ConversationMeta, type MessageView, type ProviderId } from '../shared/api.js';
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const DEFAULT_TITLE = 'Nova conversa';
@@ -124,6 +124,9 @@ export class ConversationStore {
     return this.serial(async () => {
       await this.writeIndex((await this.readIndex()).filter((c) => c.id !== id));
       await rm(path.join(this.dir, `${id}.jsonl`), { force: true });
+      const root = path.resolve(this.dir);
+      const attachments = path.join(root, `${id}-attachments`);
+      if (path.dirname(attachments) === root) await rm(attachments, { recursive: true, force: true });
     });
   }
 
@@ -133,6 +136,35 @@ export class ConversationStore {
   }
 
   async messages(id: string): Promise<MessageView[]> {
-    return (await this.transcript(id).list()).map((m) => ({ index: m.index, author: m.author, text: m.text, at: m.at }));
+    return (await this.transcript(id).list()).map((m) => ({ index: m.index, author: m.author, text: m.text, at: m.at,
+      ...(m.attachments?.length ? { attachments: m.attachments.map((file) => file.name) } : {}) }));
+  }
+
+  async saveAttachments(id: string, uploads: AttachmentUpload[]): Promise<RoomAttachment[]> {
+    this.checkId(id);
+    if (!uploads.length) return [];
+    let total = 0;
+    const files = uploads.map(({ name, data }) => {
+      const bytes = Buffer.from(data, 'base64');
+      if (bytes.toString('base64') !== data || bytes.length > ATTACHMENT_FILE_LIMIT) throw new Error('Arquivo inválido ou maior que 10 MB.');
+      total += bytes.length;
+      return { name, bytes };
+    });
+    if (total > ATTACHMENT_TOTAL_LIMIT) throw new Error('Os anexos somam mais de 25 MB.');
+    const dir = path.resolve(this.dir, `${id}-attachments`);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const saved: RoomAttachment[] = [];
+    try {
+      for (const { name, bytes } of files) {
+        const ext = path.extname(name);
+        const file = path.join(dir, randomUUID() + (/^\.[a-z0-9]{1,12}$/i.test(ext) ? ext : ''));
+        saved.push({ name, path: file });
+        await writeFile(file, bytes, { flag: 'wx', mode: 0o600 });
+      }
+      return saved;
+    } catch (err) {
+      await Promise.allSettled(saved.map(({ path: file }) => rm(file, { force: true })));
+      throw err;
+    }
   }
 }

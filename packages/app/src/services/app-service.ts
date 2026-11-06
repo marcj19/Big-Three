@@ -28,6 +28,7 @@ import { RunJournal } from './run-journal.js';
 import { workspaceDirectory, workspaceFile } from './workspace.js';
 import { browserUrl } from '../shared/browser-url.js';
 import type { BrowserBounds, BrowserState } from '../shared/api.js';
+import { ATTACHMENT_COUNT_LIMIT, ATTACHMENT_FILE_LIMIT, ATTACHMENT_ONLY_PROMPT } from '../shared/api.js';
 
 export interface AccessRequest {
   access: Exclude<Access, 'read-only'>;
@@ -69,7 +70,11 @@ const stepSchema = z.object({
 const choiceSchema = z.object({ provider: providerId, model: modelName.optional(), effort: effortName.optional() });
 const runSchema = z.object({
   conversationId: z.string(),
-  prompt: z.string().trim().min(1, 'Write something first').max(20_000),
+  prompt: z.string().trim().max(20_000),
+  attachments: z.array(z.object({
+    name: z.string().trim().min(1).max(160).regex(/^[^\x00-\x1f\x7f/\\]+$/),
+    data: z.string().max(Math.ceil(ATTACHMENT_FILE_LIMIT / 3) * 4),
+  })).max(ATTACHMENT_COUNT_LIMIT).optional(),
   spec: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('chat'), providers: z.array(providerId).min(1).max(3), access }),
     z.object({ kind: z.literal('review'), author: providerId, reviewer: providerId }),
@@ -309,6 +314,9 @@ export class AppService implements Api {
 
   async startRun(raw: StartRun): Promise<{ runId: string }> {
     const input = runSchema.parse(raw) as StartRun;
+    if (!input.prompt && !input.attachments?.length) throw new Error('Write something first');
+    if (input.attachments?.length && input.spec.kind !== 'lead' && input.spec.kind !== 'chat') throw new Error('Anexos estão disponíveis no chat.');
+    input.prompt ||= ATTACHMENT_ONLY_PROMPT;
     const meta = await this.store.get(input.conversationId);
     if (this.runs.isBusy(meta.id)) throw new Error('This conversation is already running. Wait for it or cancel it.');
     if (!(await stat(meta.cwd).then((s) => s.isDirectory(), () => false))) throw new Error('The conversation folder no longer exists');
@@ -335,7 +343,7 @@ export class AppService implements Api {
               : `${providersOf(input.spec).join(', ')} may act`);
     }
     if (this.options.updates?.state().phase === 'installing') throw new Error('O Big Three está reiniciando para atualizar.');
-    return { runId: this.runs.start(input, meta.cwd, level !== 'read-only') };
+    return { runId: await this.runs.start(input, meta.cwd, level !== 'read-only') };
   }
 
   async cancelRun(runId: string): Promise<void> {

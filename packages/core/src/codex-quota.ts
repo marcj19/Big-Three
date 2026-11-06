@@ -33,7 +33,7 @@ export function readCodexQuota(command: ResolvedCommand, env: NodeJS.ProcessEnv,
     let buffer = '', bytes = 0, done = false;
     const finish = (error?: Error, windows?: QuotaWindow[]) => {
       if (done) return;
-      done = true; clearTimeout(timer); child.stdin.end(); killTree(child);
+      done = true; clearTimeout(timer); child.stdin.end(); void killTree(child);
       if (error) reject(error); else resolve(windows ?? []);
     };
     const timer = setTimeout(() => finish(new Error('Quota check timed out')), timeoutMs);

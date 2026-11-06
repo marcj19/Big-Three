@@ -107,6 +107,7 @@ export class GeminiAdapter extends CliAdapter {
     const args = [`-p=${prompt}`, '--output-format', 'stream-json', ...ACCESS_ARGS[req.access ?? 'read-only']];
     if (req.model) args.push('--model', req.model);
     if (req.sessionId) args.push('--conversation', req.sessionId);
+    for (const dir of req.attachmentDirectories ?? []) args.push('--add-dir', dir);
     const dir = await mkdtemp(path.join(os.tmpdir(), 'aio-agy-')).catch(() => undefined);
     const log = dir ? path.join(dir, 'run.log') : undefined;
     if (log) args.push('--log-file', log);

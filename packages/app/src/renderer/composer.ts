@@ -1,4 +1,4 @@
-import type { Access, ProviderId } from '../shared/api.js';
+import { ATTACHMENT_COUNT_LIMIT, ATTACHMENT_FILE_LIMIT, ATTACHMENT_TOTAL_LIMIT, type Access, type AttachmentUpload, type ProviderId } from '../shared/api.js';
 import { api } from './bridge.js';
 import { messagesEl } from './chat.js';
 import { ctx } from './ctx.js';
@@ -11,6 +11,32 @@ import { toast } from './ui.js';
 
 const CUSTOM = '__custom__';
 const EFFORT_LABEL: Record<string, string> = { low: 'Baixo', medium: 'Médio', high: 'Alto', xhigh: 'Muito alto', max: 'Máximo' };
+const drafts = new Map<string, File[]>();
+export const draftKey = (): string => state.current?.meta.id ?? '';
+export const draftFiles = (key = draftKey()): File[] => drafts.get(key) ?? [];
+export function clearDraftFiles(key: string): void { drafts.delete(key); }
+
+export function encodeAttachment(file: File): Promise<AttachmentUpload> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Não foi possível ler ${file.name}.`));
+    reader.onload = () => resolve({ name: file.name, data: (reader.result as string).split(',', 2)[1]! });
+    reader.readAsDataURL(file);
+  });
+}
+
+function addFiles(files: File[]): void {
+  if (state.sending || !files.length) return;
+  const key = draftKey();
+  const next = [...draftFiles(key), ...files];
+  if (next.length > ATTACHMENT_COUNT_LIMIT || next.some((file) => file.size > ATTACHMENT_FILE_LIMIT)
+    || next.reduce((size, file) => size + file.size, 0) > ATTACHMENT_TOTAL_LIMIT) {
+    toast('Envie até 8 arquivos, com até 10 MB por arquivo e 25 MB no total.', 'error');
+    return;
+  }
+  drafts.set(key, next);
+  renderAttachments();
+}
 
 // ---------- the text field ----------
 
@@ -21,6 +47,17 @@ export const promptEl = h('textarea', {
   onInput: () => {
     autosize();
     updateSend();
+  },
+  onPaste: (event: ClipboardEvent) => {
+    const clipboard = event.clipboardData;
+    const files = Array.from(clipboard?.files ?? []);
+    if (!files.length) for (const item of Array.from(clipboard?.items ?? [])) {
+      const file = item.getAsFile();
+      if (file) files.push(file);
+    }
+    if (!files.length) return;
+    event.preventDefault();
+    addFiles(files);
   },
   onKeydown: (e: KeyboardEvent) => {
     // Enter sends, Shift+Enter breaks the line; never while an input method (IME) is composing.
@@ -42,37 +79,21 @@ export function setPrompt(text: string): void {
 }
 
 // The send button appears with a spring once there is something to send, like in Messages.
-const sendBtn = h('button', {
-  class: 'send idle',
-  type: 'button',
-  onClick: (event: MouseEvent) => {
-    if (state.run) {
-      // A double-click on Send can finish after this button has become Stop.
-      if (event.detail > 1) {
-        promptEl.focus();
-        return;
-      }
-      void api.cancelRun(state.run.runId).catch((err: Error) => toast(err.message, 'error'));
-    } else {
-      promptEl.focus(); // Keep Enter in the composer when the button switches to Stop.
-      void ctx.send();
-    }
-  },
-});
-let sendMode: 'send' | 'stop' | '' = '';
+const sendBtn = h('button', { class: 'send idle', type: 'button', 'aria-label': 'Enviar', title: 'Enviar (Enter)', onClick: () => {
+  promptEl.focus();
+  void ctx.send();
+} }, icon('send'));
+const stopBtn = h('button', { class: 'send stop', type: 'button', 'aria-label': 'Parar', title: 'Parar', hidden: true,
+  onClick: () => { if (state.run) void ctx.stopRun(state.run.runId); } }, icon('stop'));
 function updateSend(): void {
-  const busy = state.run !== undefined;
-  const hasText = promptEl.value.trim().length > 0;
-  const wanted = busy ? 'stop' : 'send';
-  if (sendMode !== wanted) {
-    sendMode = wanted;
-    sendBtn.replaceChildren(icon(busy ? 'stop' : 'send'));
-    sendBtn.setAttribute('aria-label', busy ? 'Parar' : 'Enviar');
-    sendBtn.title = busy ? 'Parar' : 'Enviar (Enter)';
-  }
-  sendBtn.classList.toggle('stop', busy);
-  const visible = busy || hasText;
-  sendBtn.disabled = (state.sending || state.accessChanging) && !busy;
+  const run = state.run;
+  const visible = !run && (promptEl.value.trim().length > 0 || draftFiles().length > 0);
+  sendBtn.hidden = !!run;
+  stopBtn.hidden = !run;
+  stopBtn.disabled = !!run?.stopping;
+  stopBtn.setAttribute('aria-label', run?.stopping ? 'Parando execução' : 'Parar');
+  stopBtn.title = run?.stopping ? 'Parando execução…' : 'Parar';
+  sendBtn.disabled = state.sending || state.accessChanging;
   sendBtn.classList.toggle('idle', !visible);
   sendBtn.tabIndex = visible ? 0 : -1;
   sendBtn.setAttribute('aria-hidden', String(!visible));
@@ -80,13 +101,44 @@ function updateSend(): void {
 
 // ---------- layout ----------
 
+const filePicker = h('input', { type: 'file', multiple: true, hidden: true, onChange: () => {
+  addFiles(Array.from(filePicker.files ?? []));
+  filePicker.value = '';
+} });
+const attachBtn = h('button', { class: 'icon-btn attach-btn', type: 'button', 'aria-label': 'Anexar arquivos', title: 'Anexar arquivos',
+  onClick: () => filePicker.click() }, icon('plus'));
+const attachmentList = h('div', { class: 'attachment-list', 'aria-label': 'Arquivos para enviar', hidden: true });
+
+function renderAttachments(): void {
+  const key = draftKey();
+  const files = draftFiles(key);
+  attachBtn.disabled = state.sending;
+  attachmentList.hidden = !files.length;
+  attachmentList.replaceChildren(...files.map((file, index) => h('span', { class: 'attachment-chip', title: file.name },
+    icon('file', 'sm'), h('span', {}, file.name),
+    h('button', { class: 'icon-btn', type: 'button', disabled: state.sending, 'aria-label': `Remover ${file.name}`, onClick: () => {
+      const remaining = files.filter((_, i) => i !== index);
+      if (remaining.length) drafts.set(key, remaining);
+      else clearDraftFiles(key);
+      renderAttachments();
+    } }, icon('x', 'sm')))));
+  updateSend();
+}
+
 const chipsEl = h('div', { class: 'chips' });
 const warnEl = h('div', {});
 const hintEl = h('span', { class: 'kbd-hint', 'aria-hidden': 'true' }, h('kbd', {}, 'Enter'), ' envia · ', h('kbd', {}, 'Shift+Enter'), ' nova linha');
 export const composerEl = h(
   'div',
   { class: 'composer-wrap' },
-  h('div', { class: 'composer' }, warnEl, h('div', { class: 'field-box' }, promptEl, sendBtn), h('div', { class: 'foot' }, chipsEl, hintEl)),
+  h('div', { class: 'composer' }, warnEl, attachmentList,
+    h('div', { class: 'field-box', onDragover: (event: DragEvent) => {
+      if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+    }, onDrop: (event: DragEvent) => {
+      const files = Array.from(event.dataTransfer?.files ?? []);
+      if (files.length) { event.preventDefault(); addFiles(files); }
+    } }, filePicker, attachBtn, promptEl, sendBtn, stopBtn),
+    h('div', { class: 'foot' }, chipsEl, hintEl)),
 );
 
 // Messages scroll beneath the composer, so they need to know how tall it is.
@@ -444,7 +496,7 @@ export function renderComposer(): void {
     } else closePop();
   }
   renderWarnings();
-  updateSend();
+  renderAttachments();
 }
 
 export const focusComposer = (): void => promptEl.focus();

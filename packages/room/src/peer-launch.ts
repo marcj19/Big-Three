@@ -11,6 +11,8 @@ export type Team = Partial<Record<ProviderId, TeamMember>>;
 export interface PeerServerLaunch {
   /** Optional per-run visual activity journal, owned by the desktop app. */
   activityFile?: string;
+  /** When this file disappears, the desktop run has stopped. */
+  leaseFile?: string;
   /** Who the lead may consult, with the model each one uses. Omitted: everyone else, on their default model. */
   team?: Team;
   /** Most asks one model may make during one turn; a loop of models consulting each other would burn quota. */
@@ -49,6 +51,7 @@ export function peerServerSpec(input: PeerServerSpecInput): McpServerSpec {
       AIO_ROOM_CWD: input.cwd,
       AIO_ROOM_MAX_ASKS: String(input.maxAsks ?? 6),
       ...(input.activityFile ? { AIO_ROOM_ACTIVITY_FILE: input.activityFile } : {}),
+      ...(input.leaseFile ? { AIO_ROOM_LEASE_FILE: input.leaseFile } : {}),
       ...(input.team ? { AIO_ROOM_TEAM: JSON.stringify(input.team) } : {}),
       // Inside Electron the "node" to run is the app binary itself, which must be told to behave as plain node.
       ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),

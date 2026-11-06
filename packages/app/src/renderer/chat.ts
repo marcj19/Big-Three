@@ -137,6 +137,8 @@ function messageNode(m: MessageView): HTMLElement {
       m.author === 'system' || m.author === 'user' ? '' : h('div', { class: 'who' }, name, h('span', { class: 'time' }, formatTime(m.at))),
       h('div', { class: 'text' }, renderRichText(parsed?.body ?? m.text, copy),
         parsed ? h('div', { class: 'body' }, renderRichText(parsed.question.question, copy), options.length ? h('ol', {}, ...options.map((option) => h('li', {}, option))) : '') : ''),
+      m.attachments?.length ? h('div', { class: 'attachment-list', 'aria-label': 'Arquivos anexados' },
+        ...m.attachments.map((name) => h('span', { class: 'attachment-chip', title: name }, icon('file', 'sm'), h('span', {}, name)))) : '',
       assistant ? h('div', { class: 'message-actions' }, h('button', { class: 'btn text', type: 'button', onClick: () => void copy(normalizeChatMarkdown(readableText)) }, 'Copiar resposta')) : '',
     ),
   );
@@ -207,7 +209,7 @@ function renderRunHeader(): void {
   const active = delegated.filter((entry) => entry.status === 'running');
   const shown = [...active, ...delegated.filter((entry) => entry.status !== 'running').reverse()].slice(0, 6);
   const step = run?.step;
-  const caption = run?.questions.length ? 'Aguardando sua resposta'
+  const caption = run?.stopping ? 'Parando execução…' : run?.questions.length ? 'Aguardando sua resposta'
     : step ? `Etapa ${step.index + 1} de ${step.total} · ${STEP_NAMES[step.kind]}`
       : run ? 'Execução em andamento' : 'Enviando tarefa…';
   const lead = run?.lead ?? pending?.lead;

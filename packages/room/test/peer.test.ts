@@ -1,10 +1,11 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { once } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createPeerServer, FileTranscript, MemoryTranscript, peerServerSpec } from '../src/index.js';
 import type { PeerServerOptions, TranscriptStore } from '../src/index.js';
 import { fail, stub } from './helpers.js';
@@ -26,6 +27,27 @@ async function connect(overrides: Partial<PeerServerOptions> & Pick<PeerServerOp
 }
 
 describe('room peer server', () => {
+  it('stops a running peer and refuses new consultations when the parent run stops', async () => {
+    const abort = new AbortController();
+    const gemini = stub('gemini', 'late reply');
+    gemini.run = async function* (request) {
+      gemini.requests.push(request);
+      if (!request.signal?.aborted) await once(request.signal!, 'abort');
+      yield { type: 'done', status: 'cancelled' };
+    };
+    const { call, transcript, client } = await connect({ adapters: { gemini }, signal: abort.signal });
+    try {
+      const pending = call('ask_peer', { peer: 'gemini', question: 'Work in the background' });
+      await vi.waitFor(() => expect(gemini.requests).toHaveLength(1));
+      abort.abort();
+      expect(await pending).toEqual({ isError: true, text: 'Consulta cancelada.' });
+      expect(await call('ask_peer', { peer: 'gemini', question: 'Try again' })).toMatchObject({ isError: true });
+      expect((await transcript.list()).map((m) => m.author)).toEqual(['claude']);
+    } finally {
+      await client.close();
+    }
+  });
+
   it('exposes exactly the three room tools', async () => {
     const { client } = await connect({ adapters: {} });
     expect((await client.listTools()).tools.map((t) => t.name).sort()).toEqual(['ask_peer', 'post_to_room', 'read_room']);

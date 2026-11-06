@@ -296,6 +296,12 @@ svg.logo { width: 100%; height: 100%; display: block; }
 .send:active:not(:disabled) { transform: scale(0.88); }
 .send.idle { transform: scale(0); opacity: 0; pointer-events: none; }
 .send.stop { background: var(--danger); color: #fff; }
+.send[hidden], .attachment-list[hidden] { display: none; }
+.attach-btn { flex: none; align-self: center; }
+.attachment-list { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
+.attachment-chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 3px 6px; background: var(--fill); font-size: .75rem; }
+.attachment-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-chip .icon-btn { width: 22px; height: 22px; flex: none; }
 .foot { display: flex; align-items: center; gap: 8px; padding: 0 4px; position: relative; }
 .kbd-hint { font-size: 0.75rem; color: var(--text-2); }
 .kbd-hint kbd { font: 600 0.6875rem var(--font); border-radius: 5px; padding: 1px 5px; background: var(--fill); }

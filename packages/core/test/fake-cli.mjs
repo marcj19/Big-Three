@@ -1,6 +1,7 @@
 // A stand-in for a model CLI. Reads the prompt from stdin, then behaves according to FAKE_MODE (set via the
 // first CLI argument after the script when invoked as `node fake-cli.mjs <mode> ...flags`).
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 
 const [mode, ...flags] = process.argv.slice(2);
 // `replay <file>` prints a recorded JSONL stream verbatim.
@@ -17,6 +18,12 @@ if (flags.includes('--version')) {
 }
 
 switch (mode) {
+  case 'hang-tree': {
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true });
+    out({ pid: child.pid });
+    setInterval(() => {}, 1000);
+    break;
+  }
   case 'agy-denied': {
     const log = flags[flags.indexOf('--log-file') + 1];
     writeFileSync(log, `I1105 16:06:49.349790     289 tool_confirmation_manager.go:221] Print mode: soft-denying tool confirmation "${flags[0]}" at step 2\n`);

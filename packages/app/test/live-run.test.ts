@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { readFile, stat } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import type { AppEvent, StartRun } from '../src/shared/api.js';
@@ -21,6 +22,26 @@ async function waitForQuestion(events: AppEvent[]) {
 }
 
 describe('live project runs', () => {
+  it('stores attachments for the model and transcript and removes them with the conversation', async () => {
+    const claude = stub('claude', 'Recebido');
+    const { app, workdir, done } = await makeApp({ adapters: { claude }, confirmAccess: async () => true });
+    const conv = await app.createConversation({ cwd: workdir });
+    await expect(app.startRun({ ...task(conv.id), attachments: [{ name: '../outside.txt', data: 'YQ==' }] })).rejects.toThrow();
+    await expect(app.startRun({ ...task(conv.id), attachments: [{ name: 'bad.txt', data: 'invalid' }] })).rejects.toThrow(/Arquivo inválido/);
+    const image = 'AAEC';
+    await app.startRun({ ...task(conv.id), prompt: '', attachments: [{ name: 'imagem.png', data: image }, { name: 'notas.txt', data: 'YQ==' }] });
+    expect((await done(conv.id)).outcome.status).toBe('ok');
+    const req = claude.requests[0]!;
+    const imagePath = req.attachmentImages![0]!;
+    expect(await readFile(imagePath, 'base64')).toBe(image);
+    expect(req.prompt).toContain('notas.txt');
+    expect((await app.getConversation(conv.id)).messages[0]).toMatchObject({
+      text: 'Analise os arquivos anexados.', attachments: ['imagem.png', 'notas.txt'],
+    });
+    await app.deleteConversation(conv.id);
+    await expect(stat(imagePath)).rejects.toThrow();
+  });
+
   it('publishes activity and a saved prompt before completion, waits for the answer, then offers the reachable preview', async () => {
     const server = createServer((_req, res) => res.end('Project preview'));
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

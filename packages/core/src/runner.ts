@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import path from 'node:path';
 import readline from 'node:readline';
 import type { ResolvedCommand } from './command.js';
 
@@ -32,11 +33,32 @@ export class CliAbortError extends Error {
 
 const STDERR_LIMIT = 4_000;
 
-export function killTree(child: ChildProcess): void {
-  if (child.pid === undefined || child.exitCode !== null) return;
+export async function killTree(child: ChildProcess, group = false): Promise<void> {
+  const pid = child.pid;
+  if (pid === undefined) return;
+  if (group && process.platform !== 'win32') {
+    try { process.kill(-pid, 'SIGTERM'); } catch { return; }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    try { process.kill(-pid, 'SIGKILL'); } catch { /* The group already exited. */ }
+    return;
+  }
+  if (child.exitCode !== null || child.signalCode !== null) return;
   if (process.platform === 'win32') {
-    // Model CLIs spawn their own children (tools, MCP servers); kill the whole tree.
-    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => {});
+    const command = process.env.SystemRoot ? path.join(process.env.SystemRoot, 'System32', 'taskkill.exe') : 'taskkill.exe';
+    await new Promise<void>((resolve) => {
+      const killer = spawn(command, ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      let settled = false;
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (!ok && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        resolve();
+      };
+      const timer = setTimeout(() => { killer.kill(); finish(false); }, 3_000);
+      killer.once('error', () => finish(false));
+      killer.once('exit', (code) => finish(code === 0));
+    });
   } else {
     child.kill('SIGTERM');
   }
@@ -44,11 +66,13 @@ export function killTree(child: ChildProcess): void {
 
 /** Runs a process and yields each non-empty stdout line. Throws CliExitError / CliAbortError. */
 export async function* runProcess(inv: Invocation): AsyncGenerator<string, void> {
+  if (inv.signal?.aborted) throw new CliAbortError('cancelled');
   const child = spawn(inv.command.file, [...inv.command.prefixArgs, ...inv.args], {
     cwd: inv.cwd,
     env: inv.env,
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
+    detached: process.platform !== 'win32',
     shell: false,
   });
 
@@ -64,10 +88,20 @@ export async function* runProcess(inv: Invocation): AsyncGenerator<string, void>
   });
   exit.catch(() => {}); // surfaced below; avoids an unhandled rejection if the consumer stops early
 
+  child.stdout.setEncoding('utf8');
+  const lines = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
   let abort: 'cancelled' | 'timeout' | undefined;
+  let termination: Promise<void> | undefined;
+  let interrupt!: (value: null) => void;
+  const interrupted = new Promise<null>((resolve) => { interrupt = resolve; });
   const stop = (reason: 'cancelled' | 'timeout') => {
-    abort ??= reason;
-    killTree(child);
+    if (abort) return;
+    abort = reason;
+    termination = killTree(child, true);
+    lines.close();
+    child.stdout.destroy();
+    child.stderr.destroy();
+    interrupt(null);
   };
   const onAbort = () => stop('cancelled');
   if (inv.signal?.aborted) onAbort();
@@ -78,17 +112,16 @@ export async function* runProcess(inv: Invocation): AsyncGenerator<string, void>
   child.stdin.end(inv.stdin);
 
   try {
-    child.stdout.setEncoding('utf8');
-    const lines = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
     for await (const line of lines) {
+      if (abort) break;
       if (line.trim()) yield line;
     }
-    const code = await exit;
+    const code = await Promise.race([exit, interrupted]);
     if (abort) throw new CliAbortError(abort);
     if (code !== 0) throw new CliExitError(code, stderr.trim());
   } finally {
     if (timer) clearTimeout(timer);
     inv.signal?.removeEventListener('abort', onAbort);
-    killTree(child); // no-op when it has already exited; stops the process if the consumer quit early
+    await (termination ?? killTree(child)); // also stops a process if the consumer quit early
   }
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Adapter, McpServerSpec, ProviderId, UserQuestion } from '@aio/core';
-import { crossReview, debate, peerActivityReporter, planExecute, Room, runFlow, type FlowStep, type PatternResult, type RoomEvent, type Team, type UsageTracker } from '@aio/room';
+import { crossReview, debate, peerActivityReporter, planExecute, Room, runFlow, type FlowStep, type PatternResult, type RoomAttachment, type RoomEvent, type Team, type UsageTracker } from '@aio/room';
 import type { AppEvent, RoomEventView, RunOutcome, StartRun } from '../shared/api.js';
 import type { ConversationStore } from './conversations.js';
 import { watchPeerActivity } from './peer-activity.js';
@@ -49,13 +49,20 @@ export class RunManager {
   }
 
   /** Starts in the background and returns at once; progress and the result arrive as events. */
-  start(input: StartRun, cwd: string, allowPreview = false): string {
+  async start(input: StartRun, cwd: string, allowPreview = false): Promise<string> {
     if (this.isBusy(input.conversationId)) throw new Error('This conversation is already running. Wait for it or cancel it.');
     const runId = randomUUID();
-    this.deps.journal?.begin(runId, input);
     const abort = new AbortController();
     this.active.set(runId, { conversationId: input.conversationId, abort, answers: new Map() });
-    void this.execute(runId, input, cwd, abort, allowPreview).finally(() => this.active.delete(runId));
+    try {
+      const { attachments: uploads, ...task } = input;
+      const attachments = await this.deps.store.saveAttachments(input.conversationId, uploads ?? []);
+      this.deps.journal?.begin(runId, task);
+      void this.execute(runId, task, cwd, abort, allowPreview, attachments).finally(() => this.active.delete(runId));
+    } catch (err) {
+      this.active.delete(runId);
+      throw err;
+    }
     return runId;
   }
 
@@ -96,11 +103,11 @@ export class RunManager {
    * One model answers and, when it needs to, consults the team itself. Its own CLI session is continued from turn to
    * turn, so it remembers what it read and did; only what happened in the room since is sent again.
    */
-  private async runLead(runId: string, room: Room, input: StartRun, spec: Extract<StartRun['spec'], { kind: 'lead' }>, common: { cwd: string; signal: AbortSignal; timeoutMs: number; mcpServers?: McpServerSpec[] }, adapters: RunDeps['adapters']): Promise<RunOutcome> {
+  private async runLead(runId: string, room: Room, input: StartRun, spec: Extract<StartRun['spec'], { kind: 'lead' }>, common: { cwd: string; signal: AbortSignal; timeoutMs: number; mcpServers?: McpServerSpec[] }, adapters: RunDeps['adapters'], attachments: RoomAttachment[]): Promise<RunOutcome> {
     const { deps } = this;
     const lead = spec.lead.provider;
     const meta = await deps.store.get(input.conversationId);
-    await room.say(input.prompt);
+    await room.say(input.prompt, attachments);
 
     const team = spec.consultTeam ? Object.entries(teamOf(spec.team, lead)) : [];
     if (team.length) {
@@ -146,7 +153,7 @@ export class RunManager {
     return { status: result.status, final: result.text, error: result.error };
   }
 
-  private async execute(runId: string, input: StartRun, cwd: string, abort: AbortController, allowPreview: boolean): Promise<void> {
+  private async execute(runId: string, input: StartRun, cwd: string, abort: AbortController, allowPreview: boolean, attachments: RoomAttachment[]): Promise<void> {
     const { deps } = this;
     const conversationId = input.conversationId;
     const { spec } = input;
@@ -154,6 +161,8 @@ export class RunManager {
     const adapters = allowed ? Object.fromEntries(Object.entries(deps.adapters).filter(([provider, adapter]) => adapter && allowed.has(provider as ProviderId))) : deps.adapters;
     let outcome: RunOutcome;
     let activity: Awaited<ReturnType<typeof watchPeerActivity>> | undefined;
+    const stopPeers = () => { void activity?.cancel(); };
+    abort.signal.addEventListener('abort', stopPeers, { once: true });
     let previewUrl: string | undefined;
     let previewCheck = Promise.resolve();
     const previewBanners = new Set<string>();
@@ -165,7 +174,7 @@ export class RunManager {
       }
       previewCheck = previewCheck.then(async () => {
         if (previewUrl || abort.signal.aborted) return;
-        const url = await findProjectPreview(text);
+        const url = await findProjectPreview(text, abort.signal);
         if (!url || abort.signal.aborted) return;
         previewUrl = url;
         this.publish({ type: 'project_preview', runId, conversationId, url });
@@ -177,6 +186,7 @@ export class RunManager {
           const allowed = input.spec.kind !== 'lead' || input.spec.team.some((member) => member.provider === event.peer);
           if (allowed) this.publish({ type: 'peer_activity', runId, conversationId, ...event });
         }).catch(() => undefined);
+        if (abort.signal.aborted) stopPeers();
       }
       const room = new Room({
         adapters,
@@ -189,13 +199,14 @@ export class RunManager {
         },
         onTranscript: (provider) => this.publish({ type: 'transcript', runId, conversationId, provider }),
         onQuestion: (provider, question) => this.ask(runId, provider, question),
-        peerServer: input.peerTools ? { entry: deps.peerEntry, activityFile: activity?.file, team: input.spec.kind === 'lead' ? teamOf(input.spec.team, input.spec.lead.provider) : undefined } : undefined,
+        peerServer: input.peerTools ? { entry: deps.peerEntry, activityFile: activity?.file, leaseFile: activity?.lease,
+          team: input.spec.kind === 'lead' ? teamOf(input.spec.team, input.spec.lead.provider) : undefined } : undefined,
       });
       const db = input.connections.length ? deps.databaseTools(input.connections) : undefined;
       // Desktop tasks can run long commands and are always stoppable from the UI.
       const common = { cwd, signal: abort.signal, timeoutMs: deps.timeoutMs ?? 0, withPeerTools: input.peerTools, mcpServers: db ? [db] : undefined };
       if (spec.kind === 'chat') {
-        await room.say(input.prompt);
+        await room.say(input.prompt, attachments);
         const r = await room.turn(spec.providers, "Answer the user's latest message.", { ...common, access: spec.access });
         outcome = { status: r.status, final: r.text, error: r.error };
       } else if (spec.kind === 'review') {
@@ -205,7 +216,7 @@ export class RunManager {
           await planExecute(room, { task: input.prompt, planner: spec.planner, executor: spec.executor, executorAccess: spec.executorAccess, reviewer: spec.reviewer, ...common }),
         );
       } else if (spec.kind === 'lead') {
-        outcome = await this.runLead(runId, room, input, spec, common, adapters);
+        outcome = await this.runLead(runId, room, input, spec, common, adapters, attachments);
       } else if (spec.kind === 'flow') {
         const order: ProviderId[] = ['claude', 'gemini', 'codex'];
         const steps: FlowStep[] = spec.steps.map((s) => ({
@@ -231,9 +242,12 @@ export class RunManager {
     if (outcome.status === 'ok') offerPreview(outcome.final, true);
     await previewCheck;
     await activity?.close();
+    abort.signal.removeEventListener('abort', stopPeers);
+    if (abort.signal.aborted) outcome = { status: 'cancelled', final: '' };
     const finished: AppEvent = { type: 'run_done', runId, conversationId, outcome };
     deps.journal?.event(runId, finished);
     await deps.journal?.save(runId).catch(() => {});
+    this.active.delete(runId);
     deps.emit(finished);
   }
 }

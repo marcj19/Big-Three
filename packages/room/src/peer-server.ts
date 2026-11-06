@@ -20,6 +20,7 @@ export interface PeerServerOptions {
   /** Hard cap on questions over this server's lifetime (one model turn). */
   maxAsks: number;
   askTimeoutMs?: number;
+  signal?: AbortSignal;
   /** Model and effort each teammate answers with (the lead cannot change them). */
   team?: Team;
   usage?: UsageTracker;
@@ -57,6 +58,7 @@ export function createPeerServer(options: PeerServerOptions): McpServer {
       inputSchema: { text: z.string().min(1).describe('The message') },
     },
     async ({ text }: { text: string }) => {
+      if (options.signal?.aborted) return asError('Consulta cancelada.');
       if (text.length > MAX_POST_CHARS) return asError(`Message is too long (${text.length} characters, the limit is ${MAX_POST_CHARS})`);
       await options.transcript.append({ author: self, text });
       return asText('Posted.');
@@ -72,7 +74,9 @@ export function createPeerServer(options: PeerServerOptions): McpServer {
         question: z.string().min(1).describe('A self-contained question'),
       },
     },
-    async ({ peer, question }: { peer: ProviderId; question: string }) => {
+    async ({ peer, question }: { peer: ProviderId; question: string }, { signal: requestSignal }) => {
+      const signal = options.signal ? AbortSignal.any([options.signal, requestSignal]) : requestSignal;
+      if (signal.aborted) return asError('Consulta cancelada.');
       if (peer === self) return asError('You cannot ask yourself.');
       if (!peers.includes(peer)) return asError(`${peer} is not available in this room.`);
       if (asks >= options.maxAsks) return asError(`Question limit reached (${options.maxAsks}). Work with what you have.`);
@@ -84,9 +88,12 @@ export function createPeerServer(options: PeerServerOptions): McpServer {
         model: options.team?.[peer]?.model || undefined,
         effort: options.team?.[peer]?.effort || undefined,
         timeoutMs: options.askTimeoutMs ?? 180_000,
+        signal,
       });
       report?.({ type: 'turn_end', result });
-      return result.status === 'ok' ? asText(result.text) : asError(`${NAMES[peer]} could not answer: ${result.error ?? 'unknown error'}`);
+      return result.status === 'ok' ? asText(result.text)
+        : result.status === 'cancelled' ? asError('Consulta cancelada.')
+          : asError(`${NAMES[peer]} could not answer: ${result.error ?? 'unknown error'}`);
     },
   );
 
