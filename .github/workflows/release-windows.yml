@@ -3,15 +3,26 @@ name: Release Big Three for Windows and Android
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing stable tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: read
+
+env:
+  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
 jobs:
   windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -21,7 +32,7 @@ jobs:
         run: |
           $root = Get-Content package.json -Raw | ConvertFrom-Json
           $app = Get-Content packages/app/package.json -Raw | ConvertFrom-Json
-          if ($env:GITHUB_REF_NAME -notmatch '^v\d+\.\d+\.\d+$' -or $env:GITHUB_REF_NAME -ne "v$($app.version)" -or $root.version -ne $app.version) {
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$' -or $env:RELEASE_TAG -ne "v$($app.version)" -or $root.version -ne $app.version) {
             throw 'The stable release tag and both package versions must match.'
           }
       - run: npm ci
@@ -39,15 +50,19 @@ jobs:
             dist/installer/latest.yml
 
   android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
-      - name: Install Android build tools
-        run: sdkmanager 'platforms;android-36' 'build-tools;36.1.0'
+      - name: Check runner Android SDK
+        run: |
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar"
+          test -x "$ANDROID_HOME/build-tools/36.1.0/apksigner"
       - name: Build Android release
         run: bash mobile/android/gradlew -p mobile/android :app:assembleRelease :app:lintRelease
       - name: Sign and verify Android APK
@@ -91,8 +106,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          setup="release/Big-Three-Setup-${GITHUB_REF_NAME#v}-x64.exe"
+          setup="release/Big-Three-Setup-${RELEASE_TAG#v}-x64.exe"
           assets=("$setup" "$setup.blockmap" release/latest.yml release/Big-Three-Android.apk)
           for file in "${assets[@]}"; do test -s "$file"; done
-          gh release create "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" \
-            --verify-tag --generate-notes --title "Big Three $GITHUB_REF_NAME" --latest
+          gh release create "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --generate-notes --title "Big Three $RELEASE_TAG" --latest
