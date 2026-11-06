@@ -20,7 +20,7 @@ const rendererDir = path.join(here, '..', 'renderer');
 const port = Number(process.env.AIO_WEB_PORT ?? 4173);
 const token = randomBytes(24).toString('hex');
 const origin = `http://127.0.0.1:${port}`;
-const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.map': 'application/json' };
+const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.map': 'application/json', '.png': 'image/png' };
 
 const clients = new Set<http.ServerResponse>();
 const broadcast = (event: AppEvent) => {

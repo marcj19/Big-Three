@@ -3,6 +3,7 @@ import { copyFile, cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, un
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Data, NtExecutable, NtExecutableResource, Resource } from 'resedit';
 
 if (process.platform !== 'win32' || !['x64', 'arm64'].includes(process.arch)) {
   throw new Error('Build the portable version on Windows x64 or Windows ARM64.');
@@ -26,6 +27,7 @@ assertInside(repo, output);
 const workspaces = ['app', 'core', 'db-broker', 'room'];
 const readJson = async (file) => JSON.parse(await readFile(file, 'utf8'));
 const appManifest = await readJson(path.join(repo, 'packages', 'app', 'package.json'));
+const iconPath = path.join(repo, 'packages', 'app', 'assets', 'icon.ico');
 const version = appManifest.version;
 const installer = process.argv.includes('--installer');
 if (installer && process.arch !== 'x64') throw new Error('The Windows installer currently targets x64.');
@@ -47,7 +49,18 @@ const runtimeApp = path.join(bundle, 'resources', 'app');
 try {
   const electron = require('electron');
   await cp(path.dirname(electron), bundle, { recursive: true });
-  await rename(path.join(bundle, 'electron.exe'), path.join(bundle, 'Big Three.exe'));
+  // Prepackaged builds bypass Electron Builder's executable resource editing.
+  const electronExe = path.join(bundle, 'electron.exe');
+  const appExe = path.join(bundle, 'Big Three.exe');
+  const executable = NtExecutable.from(await readFile(electronExe), { ignoreCert: true });
+  const resources = NtExecutableResource.from(executable);
+  const iconGroups = Resource.IconGroupEntry.fromEntries(resources.entries);
+  if (!iconGroups.length) throw new Error('Could not locate the Electron executable icon.');
+  const icons = Data.IconFile.from(await readFile(iconPath)).icons.map(({ data }) => data);
+  for (const { id, lang } of iconGroups) Resource.IconGroupEntry.replaceIconsForResource(resources.entries, id, lang, icons);
+  resources.outputResource(executable);
+  await writeFile(appExe, Buffer.from(executable.generate()));
+  await unlink(electronExe);
   await rename(path.join(bundle, 'electron_wer.dll'), path.join(bundle, 'Big Three_wer.dll'));
   await mkdir(runtimeApp, { recursive: true });
   await copyFile(path.join(repo, 'LICENSE'), path.join(bundle, 'LICENSE.Big-Three'));
@@ -109,7 +122,7 @@ try {
         extraMetadata: { version, main: 'packages/app/dist/main/main.js' },
         electronVersion: require('electron/package.json').version,
         directories: { output: path.join(output, 'installer') },
-        win: { executableName: 'Big Three', signAndEditExecutable: false },
+        win: { executableName: 'Big Three', icon: iconPath, signAndEditExecutable: false },
         nsis: { oneClick: true, perMachine: false, artifactName: 'Big-Three-Setup-${version}-${arch}.${ext}' },
         publish,
       },

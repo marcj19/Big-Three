@@ -141,7 +141,7 @@ svg.logo { width: 100%; height: 100%; display: block; }
 .sidebar { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 12px 0 8px; background: var(--sidebar-bg); transition: opacity 0.2s, transform 0.28s var(--soft); }
 .shell.collapsed .sidebar { visibility: hidden; opacity: 0; transform: translateX(-24px); }
 .brand { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 16px; }
-.brand .mark { display: flex; color: var(--text-2); }
+.brand .mark { display: block; flex: none; }
 .brand .name { font: 650 .9375rem var(--font-display); letter-spacing: -0.01em; }
 .sidebar .sidebar-action, .sidebar-footer .btn { justify-content: flex-start; min-height: var(--sidebar-row); padding: 0 9px; border-radius: 7px; background: transparent; color: var(--text-2); font-size: .8125rem; }
 .sidebar .sidebar-action:hover:not(:disabled), .sidebar-footer .btn:hover:not(:disabled) { background: var(--sidebar-hover); color: var(--text); }

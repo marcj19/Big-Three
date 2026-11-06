@@ -191,7 +191,7 @@ export function renderSidebar(): void {
       h(
         'div',
         { class: 'brand' },
-        h('span', { class: 'mark' }, icon('workspace')),
+        h('img', { class: 'mark', src: 'icon.png', width: 22, height: 22, alt: '' }),
         h('span', { class: 'name' }, 'Big Three'),
       ),
       h('button', { class: 'btn sidebar-action new-btn', type: 'button', 'data-fk': 'new-conv', onClick: () => void ctx.newConversation() }, icon('plus', 'sm'), 'Nova conversa', h('kbd', { 'aria-hidden': 'true' }, 'Ctrl+N')),

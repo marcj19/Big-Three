@@ -77,6 +77,7 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 600,
     title: process.env.AIO_DEMO === '1' ? 'Big Three · Demonstração' : 'Big Three',
+    icon: path.join(here, '..', 'renderer', 'icon.png'),
     // Matches the page's own background so there is no white flash while it loads.
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0f1218' : '#f4f6fb',
     webPreferences: {

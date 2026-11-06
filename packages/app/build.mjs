@@ -21,4 +21,5 @@ await build({
 
 await copyFile('src/renderer/index.html', 'dist/renderer/index.html');
 await copyFile('src/renderer/styles.css', 'dist/renderer/styles.css');
+await copyFile('assets/icon.png', 'dist/renderer/icon.png');
 await copyFile('src/main/preload.cjs', 'dist/main/preload.cjs');
