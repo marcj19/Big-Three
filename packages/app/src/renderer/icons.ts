@@ -20,6 +20,7 @@ function burst(cx: number, cy: number, rays: number, inner: number, long: number
 
 const UI: Record<string, string> = {
   plus: '<path d="M12 5v14M5 12h14"/>',
+  phone: '<rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18.5h2"/>',
   file: '<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/>',
   send: '<path d="M12 19V5M5 12l7-7 7 7"/>',
   stop: '<rect x="7" y="7" width="10" height="10" rx="2.5" fill="currentColor" stroke="none"/>',

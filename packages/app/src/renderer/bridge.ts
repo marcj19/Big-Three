@@ -1,4 +1,5 @@
 import { API_METHODS, type Api, type AppEvent } from '../shared/api.js';
+import type { MobileAccessState, MobileCommand } from '../shared/mobile.js';
 
 interface Bridge {
   invoke(method: string, args: unknown[]): Promise<unknown>;
@@ -37,6 +38,8 @@ const bridge: Bridge = window.aioBridge ?? webBridge();
 
 export const api = Object.fromEntries(API_METHODS.map((m) => [m, (...args: unknown[]) => bridge.invoke(m, args)])) as unknown as Api;
 export const onEvent = (callback: (event: AppEvent) => void): (() => void) => bridge.onEvent(callback);
+export const mobileAccess = (command?: MobileCommand): Promise<MobileAccessState> => bridge.invoke('mobileAccess', command ? [command] : []) as Promise<MobileAccessState>;
+export const downloadAndroid = (): Promise<void> => bridge.invoke('downloadAndroid', []) as Promise<void>;
 
 export async function writeClipboardText(text: string): Promise<void> {
   if (window.aioBridge) await window.aioBridge.writeClipboardText(text);

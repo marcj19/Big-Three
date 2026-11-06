@@ -397,6 +397,10 @@ svg.logo { width: 100%; height: 100%; display: block; }
 .appearance-settings section { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--line); }
 .appearance-settings h3 { font-size: .8125rem; color: var(--text-2); }
 .appearance-settings .seg button { padding-inline: 8px; }
+.mobile-access, .mobile-pair { display: grid; gap: 8px; }
+.mobile-pair { padding: 12px; border-radius: 8px; background: var(--fill); font-size: .8125rem; }
+.mobile-pair input { min-width: 0; padding: 6px; font-family: var(--mono); }
+.mobile-pair .btn { justify-self: start; }
 
 /* ---------- motion ---------- */
 @keyframes bubble-in { from { opacity: 0; transform: translateY(16px) scale(0.94); } to { opacity: 1; transform: none; } }

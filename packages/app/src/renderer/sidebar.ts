@@ -10,6 +10,7 @@ import { confirmDialog, toast } from './ui.js';
 import { openQuotas } from './quotas.js';
 import { updatesButton } from './updates.js';
 import { meterOf } from './quota-format.js';
+import { openMobileAccess } from './mobile.js';
 
 export const sidebarEl = h('nav', { class: 'sidebar', 'aria-label': 'Conversas, modelos e bancos de dados' });
 let modelsCollapsed = false;
@@ -199,6 +200,7 @@ export function renderSidebar(): void {
       history,
       tools,
       h('div', { class: 'sidebar-footer' },
+        window.aioBridge ? h('button', { class: 'btn sidebar-action block', type: 'button', 'data-fk': 'mobile-access', onClick: openMobileAccess }, icon('phone', 'sm'), 'Acesso pelo celular') : '',
         h('button', { class: 'btn sidebar-action block', type: 'button', title: 'Aparência e acessibilidade', 'data-fk': 'appearance', onClick: openAppearance }, icon('sliders', 'sm'), 'Configurações'),
         updatesButton()),
     );

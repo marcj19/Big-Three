@@ -30,12 +30,12 @@ export class RunJournal {
     // Bound memory; completed runs remain available on disk.
     if (this.records.size > 100) for (const [key, value] of this.records) if (value.status !== 'running' && key !== id) { this.records.delete(key); break; }
   }
-  async list(conversationId: string): Promise<RunRecord[]> {
+  async list(conversationId: string, limit = 50): Promise<RunRecord[]> {
     const all = new Map(this.records);
     const dir = path.join(this.dir, conversationId);
     const files = await readdir(dir).catch(() => [] as string[]);
     const recent = (await Promise.all(files.filter((name) => /^[0-9a-f-]{36}\.json$/.test(name)).map(async (name) => ({ name, time: await stat(path.join(dir, name)).then((info) => info.mtimeMs, () => 0) }))))
-      .sort((a, b) => b.time - a.time).slice(0, 50);
+      .sort((a, b) => b.time - a.time).slice(0, limit);
     const sorted = await Promise.all(recent.map(async ({ name }) => {
       try {
         if ((await stat(path.join(dir, name))).size > 1_000_000) return undefined;
@@ -46,7 +46,7 @@ export class RunJournal {
       } catch { return undefined; }
     }));
     for (const record of sorted) if (record && !all.has(record.id)) all.set(record.id, record);
-    return [...all.values()].filter((record) => record.conversationId === conversationId).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 50);
+    return [...all.values()].filter((record) => record.conversationId === conversationId).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, limit);
   }
   async removeConversation(conversationId: string): Promise<void> {
     id.parse(conversationId);

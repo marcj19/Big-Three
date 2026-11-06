@@ -2,13 +2,15 @@ import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { configDir } from '@aio/db-broker';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, session, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, session, shell, type IpcMainInvokeEvent } from 'electron';
 import { AppService } from '../services/app-service.js';
 import { API_METHODS, type AppEvent } from '../shared/api.js';
 import { EmbeddedBrowser } from './browser.js';
 import { demoAdapters } from '../dev/demo-adapters.js';
 import electronUpdater from 'electron-updater';
 import { AppUpdates } from './updates.js';
+import { MobileGateway } from '../services/mobile.js';
+import { ANDROID_DOWNLOAD } from '../shared/mobile.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const pageUrl = pathToFileURL(path.join(here, '..', 'renderer', 'index.html')).href;
@@ -52,6 +54,8 @@ const service = new AppService({
     return r.canceled ? null : (r.filePaths[0] ?? null);
   },
 });
+const mobile = new MobileGateway(service);
+app.on('before-quit', () => mobile.stop());
 
 /** Only our own page may call the API; anything else loaded into the window (it should never be) is ignored. */
 function fromOurPage(event: IpcMainInvokeEvent): boolean {
@@ -68,6 +72,16 @@ for (const method of API_METHODS) {
 ipcMain.handle('aio:writeClipboardText', (event, text: unknown) => {
   if (!fromOurPage(event) || typeof text !== 'string' || text.length > 4_000_000) throw new Error('Não foi possível copiar o texto.');
   return clipboard.writeText(text);
+});
+
+ipcMain.handle('aio:mobileAccess', (event, command: unknown) => {
+  if (!fromOurPage(event) || (command !== undefined && command !== 'pair' && command !== 'stop')) throw new Error('Acesso pelo celular indisponível.');
+  return mobile.manage(command);
+});
+
+ipcMain.handle('aio:downloadAndroid', (event) => {
+  if (!fromOurPage(event)) throw new Error('Download indisponível.');
+  return shell.openExternal(ANDROID_DOWNLOAD);
 });
 
 function createWindow(): void {

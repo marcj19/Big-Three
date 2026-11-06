@@ -182,6 +182,18 @@ export class AppService implements Api {
     }).parse(selection));
   }
   async runHistory(conversationId: string) { await this.store.get(z.string().parse(conversationId)); return this.journal.list(conversationId); }
+  async mobileConversations() {
+    return { conversations: (await this.store.list()).slice(0, 100).map(({ id, title, updatedAt }) => ({ id, title, updatedAt, running: this.runs.isBusy(id) })) };
+  }
+
+  async mobileConversation(id: string) {
+    const meta = (await this.store.list()).find((entry) => entry.id === id);
+    if (!meta) return undefined;
+    const [messages, history] = await Promise.all([this.store.messages(id), this.journal.list(id, 1)]);
+    const run = history[0];
+    return { title: meta.title, messages: messages.slice(-40).map(({ author, at, text }) => ({ author, at, text: text.slice(0, 12_000) })),
+      activity: run ? { status: run.status, entries: run.entries.slice(-18).map(({ at, label, provider, peer, status }) => ({ at, label, provider, peer, status })) } : null };
+  }
   async browserState(): Promise<BrowserState> { return this.options.browser?.state() ?? { supported: false, url: '', title: '', loading: false, canBack: false, canForward: false }; }
   async browserNavigate(url: string): Promise<void> {
     const address = browserUrl(z.string().max(4000).parse(url));

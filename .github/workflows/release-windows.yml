@@ -1,4 +1,4 @@
-name: Release Windows installer
+name: Release Big Three for Windows and Android
 
 on:
   push:
@@ -8,10 +8,8 @@ permissions:
   contents: read
 
 jobs:
-  release:
+  windows:
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,15 +28,71 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run package:installer
-      - name: Publish the installer and update metadata
-        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          if-no-files-found: error
+          compression-level: 0
+          path: |
+            dist/installer/Big-Three-Setup-*-x64.exe
+            dist/installer/Big-Three-Setup-*-x64.exe.blockmap
+            dist/installer/latest.yml
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Install Android build tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.1.0'
+      - name: Build Android release
+        run: bash mobile/android/gradlew -p mobile/android :app:assembleRelease :app:lintRelease
+      - name: Sign and verify Android APK
+        env:
+          BIG_THREE_ANDROID_KEYSTORE: ${{ secrets.BIG_THREE_ANDROID_KEYSTORE }}
+          BIG_THREE_ANDROID_PASSWORD: ${{ secrets.BIG_THREE_ANDROID_PASSWORD }}
+          ANDROID_SIGNER_SHA256: 1e1450bf3712a403f07b563cc186766940556077e0b08376006dd6f565b10155
+        run: |
+          test -n "$BIG_THREE_ANDROID_KEYSTORE"
+          test -n "$BIG_THREE_ANDROID_PASSWORD"
+          keystore=$(mktemp)
+          trap 'rm -f -- "$keystore"' EXIT
+          printf '%s' "$BIG_THREE_ANDROID_KEYSTORE" | base64 --decode > "$keystore"
+          signer="$ANDROID_HOME/build-tools/36.1.0/apksigner"
+          "$signer" sign --ks "$keystore" --ks-type PKCS12 --ks-key-alias big-three-android \
+            --ks-pass env:BIG_THREE_ANDROID_PASSWORD --out Big-Three-Android.apk \
+            mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          report=$("$signer" verify --print-certs Big-Three-Android.apk)
+          grep -Fx "Signer #1 certificate SHA-256 digest: $ANDROID_SIGNER_SHA256" <<< "$report"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          if-no-files-found: error
+          path: Big-Three-Android.apk
+
+  release:
+    needs: [windows, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-release
+          path: release
+      - name: Publish installers and update metadata
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $version = $env:GITHUB_REF_NAME.Substring(1)
-          $setup = "dist/installer/Big-Three-Setup-$version-x64.exe"
-          $assets = @($setup, "$setup.blockmap", 'dist/installer/latest.yml')
-          foreach ($asset in $assets) {
-            if (!(Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Missing release asset $asset" }
-          }
-          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --generate-notes --title "Big Three $env:GITHUB_REF_NAME" --latest
+          setup="release/Big-Three-Setup-${GITHUB_REF_NAME#v}-x64.exe"
+          assets=("$setup" "$setup.blockmap" release/latest.yml release/Big-Three-Android.apk)
+          for file in "${assets[@]}"; do test -s "$file"; done
+          gh release create "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --generate-notes --title "Big Three $GITHUB_REF_NAME" --latest
