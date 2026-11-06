@@ -1,3 +1,5 @@
+import type { HarnessPanel } from './harness.js';
+
 /**
  * Actions the views call on each other. They are filled in by app.ts, which keeps the views free of import cycles.
  */
@@ -18,5 +20,5 @@ export const ctx = {
   setPrompt: (_text: string): void => {},
   openBrowser: (_url: string): void => {},
   renderHarness: (): void => {},
-  togglePanel: (_panel: 'activity' | 'files' | 'browser'): void => {},
+  togglePanel: (_panel: HarnessPanel): void => {},
 };

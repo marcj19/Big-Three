@@ -4,11 +4,15 @@ import { browserUrl } from '../shared/browser-url.js';
 import { api, writeClipboardText } from './bridge.js';
 import { ctx } from './ctx.js';
 import { formatTime, h, keepFocus, renderRichText } from './dom.js';
+import { gitPage, refreshGit } from './git.js';
 import { icon, providerMark } from './icons.js';
 import { NAMES, state } from './state.js';
 import { toast } from './ui.js';
 
-export type HarnessPanel = 'activity' | 'files' | 'browser';
+const PANELS = [
+  ['activity', 'Atividade', 'plan'], ['files', 'Arquivos', 'folder'], ['git', 'Git', 'branch'], ['browser', 'Navegador', 'eye'],
+] as const;
+export type HarnessPanel = (typeof PANELS)[number][0];
 let panel: HarnessPanel | undefined;
 let conversationId: string | undefined;
 let records: RunRecord[] = [];
@@ -37,9 +41,9 @@ export const harnessEl = h('aside', { class: 'harness', id: 'workbench-panel', '
     h('div', { class: 'harness-controls' },
       expand,
       h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Fechar área de trabalho', onClick: () => setPanel(undefined) }, icon('x')))),
-  h('div', { class: 'harness-tabs', 'aria-label': 'Painéis' }, ...(['activity', 'files', 'browser'] as const).map((id) => h('button', {
+  h('div', { class: 'harness-tabs', 'aria-label': 'Painéis' }, ...PANELS.map(([id, label]) => h('button', {
     type: 'button', 'data-panel': id, onClick: () => setPanel(id),
-  }, id === 'activity' ? 'Atividade' : id === 'files' ? 'Arquivos' : 'Navegador'))), activity, files, browserPage);
+  }, label))), activity, files, gitPage, browserPage);
 
 export const harnessResize = h('div', {
   class: 'harness-resizer', hidden: true, role: 'separator', tabindex: '0',
@@ -96,21 +100,28 @@ function setWide(value: boolean): void {
 }
 
 export function harnessToolbar(): HTMLElement {
-  return h('div', { class: 'harness-toolbar', 'aria-label': 'Abrir área de trabalho' }, ...([
-    ['activity', 'Atividade', 'plan'], ['files', 'Arquivos', 'folder'], ['browser', 'Navegador', 'eye'],
-  ] as const).map(([id, label, mark]) => h('button', { class: 'btn', type: 'button', 'aria-label': label, 'aria-pressed': String(panel === id), onClick: () => togglePanel(id) }, icon(mark, 'sm'), h('span', {}, label))));
+  return h('div', { class: 'harness-toolbar', 'aria-label': 'Abrir área de trabalho' }, ...PANELS.map(([id, label, mark]) => h('button', {
+    class: 'btn', type: 'button', 'data-panel-toggle': id, 'aria-label': label, 'aria-pressed': String(panel === id), onClick: () => togglePanel(id),
+  }, icon(mark, 'sm'), h('span', {}, label))));
 }
 export function togglePanel(value: HarnessPanel): void { setPanel(panel === value ? undefined : value); }
 function setPanel(value: HarnessPanel | undefined): void {
+  const focused = document.activeElement;
+  let restoreFocus = focused instanceof HTMLElement ? focused.dataset.panelToggle : undefined;
+  if (!value && harnessEl.contains(focused)) restoreFocus = panel;
   panel = value; harnessEl.hidden = !value;
   harnessEl.closest('.workbench')?.classList.toggle('has-panel', !!value);
   activity.hidden = value !== 'activity'; files.hidden = value !== 'files'; browserPage.hidden = value !== 'browser';
-  heading.textContent = value === 'files' ? 'Arquivos' : value === 'browser' ? 'Navegador' : 'Atividade';
+  gitPage.hidden = value !== 'git';
+  heading.textContent = PANELS.find(([id]) => id === value)?.[1] ?? 'Atividade';
   for (const button of harnessEl.querySelectorAll<HTMLElement>('[data-panel]')) button.setAttribute('aria-pressed', String(button.dataset.panel === value));
   setWide(!!value && wide);
   applyWidth();
-  ctx.renderTopbar(); renderHarness(); scheduleBounds();
+  ctx.renderTopbar();
+  if (restoreFocus) document.querySelector<HTMLElement>(`[data-panel-toggle="${CSS.escape(restoreFocus)}"]`)?.focus({ preventScroll: true });
+  renderHarness(); scheduleBounds();
   if (value === 'activity') void refreshHistory();
+  if (value === 'git') void refreshGit(state.current?.meta.id);
   if (value === 'browser') void api.browserState().then(onBrowserState).catch(fail);
 }
 
@@ -168,7 +179,10 @@ export function onHarnessEvent(event: AppEvent): void {
   const record = liveRecord?.id === event.runId ? liveRecord : records.find((record) => record.id === event.runId);
   if (record) recordWork(record, event);
   if (event.type !== 'room' || event.event.type !== 'text') signature = '';
-  if (event.type === 'run_done') { void refreshHistory(); void refreshFiles(); }
+  if (event.type === 'run_done') {
+    void refreshHistory(); void refreshFiles();
+    if (panel === 'git' && event.conversationId === state.current?.meta.id) void refreshGit(event.conversationId);
+  }
   renderActivity();
 }
 async function refreshHistory(): Promise<void> {
@@ -371,6 +385,7 @@ export function renderHarness(): void {
   if (conversationId !== id) {
     conversationId = id; records = liveRecord && liveRecord.conversationId === id ? [liveRecord] : []; chosenRun = ''; signature = ''; directories.clear(); loadingDirectories.clear(); expanded.clear(); expanded.add(''); currentFile = undefined; fileTicket++; directoryError = '';
     if (panel === 'activity') void refreshHistory();
+    if (panel === 'git') void refreshGit(id);
   }
   if (panel === 'activity') renderActivity();
   else if (panel === 'files') renderFiles();

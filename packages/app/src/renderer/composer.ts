@@ -126,7 +126,7 @@ function renderAttachments(): void {
 }
 
 const chipsEl = h('div', { class: 'chips' });
-const warnEl = h('div', {});
+const warnEl = h('div', { class: 'composer-notices' });
 const hintEl = h('span', { class: 'kbd-hint', 'aria-hidden': 'true' }, h('kbd', {}, 'Enter'), ' envia · ', h('kbd', {}, 'Shift+Enter'), ' nova linha');
 export const composerEl = h(
   'div',
@@ -370,7 +370,7 @@ function accessPop(): HTMLElement {
   accessSeg.set(level);
   return h('div', { class: 'pop-body' }, h('p', { class: 'pop-title' }, 'Acesso nesta conversa'), accessSeg.el,
     h('p', { class: 'muted small' }, ACCESS_META[level].hint),
-    h('p', { class: 'muted small' }, 'Confirme uma vez ao ampliar o acesso. A escolha vale nesta conversa até você fechar o app.'));
+    h('p', { class: 'muted small' }, 'A escolha fica salva nesta conversa no app desktop. Use este seletor para mudar o acesso.'));
 }
 
 function teamPop(): HTMLElement {
@@ -448,11 +448,15 @@ function renderChips(): void {
   const access = conversationAccess();
   const teamAvailable = c.consultTeam || canLead(lead);
   const teamText = members.length ? `${c.consultTeam ? 'Equipe automática' : 'Equipe'}: ${members.map((p) => NAMES[p]).join(', ')}` : 'Sem equipe';
+  const accessInfo = ACCESS_META[access];
+  const accessChip = chip('access', [icon(accessInfo.icon, 'sm'), access === 'full' ? h('span', { class: 'sr-only' }, accessInfo.label) : accessInfo.label],
+    accessPop, 'Acesso', access === 'full' ? 'access-full' : access === 'edit' ? 'warn' : '');
+  accessChip.title = accessInfo.label;
 
   for (const child of Array.from(chipsEl.children)) if (child !== pop) child.remove();
   const chips = [
     chip('model', modelContent, modelPop, 'Modelo'),
-    chip('access', [icon(ACCESS_META[access].icon, 'sm'), ACCESS_META[access].label], accessPop, 'Acesso', access === 'edit' ? 'warn' : access === 'full' ? 'danger' : ''),
+    accessChip,
     chip('team', [icon('users', 'sm'), teamText], teamPop, 'Equipe', !teamAvailable || !members.length ? 'muted-chip' : ''),
   ];
   const dbs = state.connections.filter((x) => x.hasPassword);
@@ -467,11 +471,11 @@ function renderWarnings(): void {
   clear(warnEl);
   const c = state.config;
   const level = conversationAccess();
-  if (level !== 'read-only') {
+  if (level === 'edit') {
     warnEl.append(
       h(
         'div',
-        { class: `warn-line ${level === 'full' ? 'danger' : 'warn'}`, role: 'note' },
+        { class: 'warn-line warn', role: 'note' },
         icon('shield', 'sm'),
         h('span', {}, `${ACCESS_META[level].label} nesta conversa. ${ACCESS_META[level].hint}`),
       ),

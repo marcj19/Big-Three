@@ -135,7 +135,8 @@ async function refreshTranscript(id: string, savedProvider?: ProviderId): Promis
     if (finished && state.run === run && run) run.live = run.live.filter((turn) => turn !== finished);
     if (ticket === transcriptTicket) {
       const renamed = state.current.meta.title !== conversation.meta.title;
-      state.current = conversation;
+      // The transcript request can finish after the access selector already saved a new choice.
+      state.current = { ...conversation, access: state.current.access };
       reconcilePending();
       if (renamed) renderTopbar();
     }

@@ -4,7 +4,7 @@ import { openAppearance } from './appearance.js';
 import { openConnectionsDialog } from './connections.js';
 import { ctx } from './ctx.js';
 import { clear, dayGroup, h, keepFocus, relativeTime } from './dom.js';
-import { appMark, engineMark, icon, providerMark } from './icons.js';
+import { icon } from './icons.js';
 import { NAMES, PROVIDERS, provider, state } from './state.js';
 import { confirmDialog, toast } from './ui.js';
 import { openQuotas } from './quotas.js';
@@ -15,17 +15,19 @@ export const sidebarEl = h('nav', { class: 'sidebar', 'aria-label': 'Conversas, 
 let modelsCollapsed = false;
 try { modelsCollapsed = localStorage.getItem('aio.models.collapsed') === 'true'; } catch { /* defaults */ }
 
-function statusOf(id: (typeof PROVIDERS)[number]): { text: string; cls: string; ic: 'check' | 'alert' | 'info' } {
+const PROVIDER_ICONS = { claude: 'sun', gemini: 'sparkle', codex: 'terminal' } as const;
+
+function statusOf(id: ProviderId): { text: string; cls: string } {
   const p = provider(id);
-  if (!p) return { text: 'Verificando…', cls: '', ic: 'info' };
-  if (!p.available) return { text: 'Não instalado', cls: 'bad', ic: 'alert' };
-  if (p.signedIn === true) return { text: 'Conectado', cls: 'ok', ic: 'check' };
-  if (p.signedIn === false) return { text: 'Desconectado', cls: 'bad', ic: 'alert' };
-  return { text: 'Instalado', cls: 'unknown', ic: 'info' };
+  if (!p) return { text: 'Verificando…', cls: '' };
+  if (!p.available) return { text: 'Não instalado', cls: 'bad' };
+  if (p.signedIn === true) return { text: 'Conectado', cls: 'ok' };
+  if (p.signedIn === false) return { text: 'Desconectado', cls: 'bad' };
+  return { text: 'Instalado', cls: 'unknown' };
 }
 
 function conversationList(): HTMLElement {
-  const wrap = h('div', { class: 'scroll' });
+  const wrap = h('div', { class: 'sidebar-history' });
   if (!state.conversations.length) {
     wrap.append(h('p', { class: 'empty-note' }, 'Nenhuma conversa ainda. Crie a primeira acima.'));
     return wrap;
@@ -45,7 +47,8 @@ function conversationList(): HTMLElement {
       h(
         'li',
         { class: 'conv', 'aria-current': active ? 'true' : undefined },
-        h('button', { class: 'conv-main', type: 'button', 'data-fk': `conv-${c.id}`, title: `${c.title} · ${relativeTime(c.updatedAt)}`, onClick: () => void ctx.openConversation(c.id) }, c.title),
+        h('button', { class: 'conv-main', type: 'button', 'data-fk': `conv-${c.id}`, title: `${c.title} · ${relativeTime(c.updatedAt)}`, onClick: () => void ctx.openConversation(c.id) },
+          icon('chat', 'sm'), h('span', {}, c.title)),
         h('button', { class: 'icon-btn sm conv-rename', type: 'button', 'data-fk': `rename-${c.id}`,
           'aria-label': `Renomear a conversa ${c.title}`, title: 'Renomear', onClick: () => ctx.renameChat(c.id, c.title) }, icon('pencil', 'sm')),
         h(
@@ -78,11 +81,11 @@ function conversationList(): HTMLElement {
 }
 
 function modelsPanel(): HTMLElement {
-  const panel = h('section', { class: 'panel', 'aria-labelledby': 'models-h' });
+  const panel = h('section', { class: 'sidebar-section', 'aria-labelledby': 'models-h' });
   panel.append(
     h(
       'div',
-      { class: 'panel-head' },
+      { class: 'sidebar-section-head' },
       h('button', { id: 'models-h', class: 'models-toggle', type: 'button', 'data-fk': 'toggle-models', 'aria-expanded': String(!modelsCollapsed), 'aria-controls': 'models-body',
         title: modelsCollapsed ? 'Expandir modelos' : 'Recolher modelos', onClick: () => {
           modelsCollapsed = !modelsCollapsed;
@@ -102,20 +105,20 @@ function modelsPanel(): HTMLElement {
   for (const id of PROVIDERS) {
     const p = provider(id);
     const st = statusOf(id);
-    const off = !p?.available;
     body.append(
       h(
         'div',
         { class: 'prov' },
-        h('span', { class: `avatar${off ? ' off' : ''}` }, providerMark(id)),
+        h('span', { class: 'prov-mark' }, icon(PROVIDER_ICONS[id], 'sm')),
         h(
           'div',
           { class: 'info' },
           h('div', { class: 'nm' }, p?.displayName ?? NAMES[id]),
-          h('div', { class: `st ${st.cls}` }, icon(st.ic, 'sm'), st.text, p?.version && p.available && /\d+\.\d+/.test(p.version) ? h('span', { class: 'muted' }, `· ${/\d+(\.\d+)+/.exec(p.version)![0]}`) : ''),
+          h('div', { class: `st ${st.cls}` }, h('span', { class: 'status-dot', 'aria-hidden': 'true' }), st.text,
+            p?.version && p.available && /\d+\.\d+/.test(p.version) ? h('span', {}, `· ${/\d+(\.\d+)+/.exec(p.version)![0]}`) : ''),
         ),
         p?.available && p.signedIn !== true && p.canLogin
-          ? h('button', { class: 'btn tonal', type: 'button', 'data-fk': `login-${id}`, onClick: () => void api.loginProvider(id).catch((e: Error) => toast(e.message, 'error')) }, 'Entrar')
+          ? h('button', { class: 'btn text', type: 'button', 'data-fk': `login-${id}`, onClick: () => void api.loginProvider(id).catch((e: Error) => toast(e.message, 'error')) }, 'Entrar')
           : '',
       ),
     );
@@ -135,7 +138,7 @@ function modelsPanel(): HTMLElement {
     });
     body.append(h('div', { class: 'usage-line', 'aria-label': 'Uso nesta sessão' }, h('b', {}, 'Uso nesta sessão do app'), h('br'), ...lines.flatMap((l, i) => (i ? [h('br'), l] : [l]))));
   }
-  panel.append(h('button', { class: 'btn text block', type: 'button', 'data-fk': 'open-quotas', onClick: openQuotas }, icon('plan', 'sm'), 'Limites e uso'));
+  panel.append(h('button', { class: 'btn sidebar-action block', type: 'button', 'data-fk': 'open-quotas', onClick: openQuotas }, icon('plan', 'sm'), 'Limites e uso'));
   return panel;
 }
 
@@ -153,22 +156,23 @@ function quotaMeters(id: ProviderId): HTMLElement | string {
 }
 
 function databasesPanel(): HTMLElement {
-  const panel = h('section', { class: 'panel', 'aria-labelledby': 'dbs-h' });
-  panel.append(h('div', { class: 'panel-head' }, h('span', { id: 'dbs-h' }, 'Bancos de dados')));
+  const panel = h('section', { class: 'sidebar-section', 'aria-labelledby': 'dbs-h' });
+  panel.append(h('h2', { class: 'sidebar-section-head', id: 'dbs-h' }, 'Bancos de dados'));
   for (const c of state.connections) {
     panel.append(
       h(
         'div',
         { class: 'prov' },
-        h('span', { class: 'tile' }, engineMark(c.engine)),
-        h('div', { class: 'info' }, h('div', { class: 'nm' }, c.name), h('div', { class: `st ${c.hasPassword ? 'ok' : 'unknown'}` }, icon(c.hasPassword ? 'check' : 'alert', 'sm'), c.hasPassword ? 'Pronto' : 'Falta a senha')),
+        h('span', { class: 'prov-mark' }, icon('database', 'sm')),
+        h('div', { class: 'info' }, h('div', { class: 'nm' }, c.name), h('div', { class: `st ${c.hasPassword ? 'ok' : 'unknown'}` },
+          h('span', { class: 'status-dot', 'aria-hidden': 'true' }), c.hasPassword ? 'Pronto' : 'Falta a senha')),
       ),
     );
   }
   panel.append(
     h(
       'button',
-      { class: 'btn text block', type: 'button', 'data-fk': 'manage-dbs', onClick: () => openConnectionsDialog(ctx.refreshConnections) },
+      { class: 'btn sidebar-action block', type: 'button', 'data-fk': 'manage-dbs', onClick: () => openConnectionsDialog(ctx.refreshConnections) },
       icon(state.connections.length ? 'sliders' : 'plus', 'sm'),
       state.connections.length ? 'Gerenciar' : 'Conectar um banco',
     ),
@@ -177,21 +181,28 @@ function databasesPanel(): HTMLElement {
 }
 
 export function renderSidebar(): void {
+  const historyTop = sidebarEl.querySelector('.sidebar-history')?.scrollTop ?? 0;
+  const toolsTop = sidebarEl.querySelector('.sidebar-tools')?.scrollTop ?? 0;
+  const history = conversationList();
+  const tools = h('div', { class: 'sidebar-tools' }, modelsPanel(), databasesPanel());
   keepFocus(sidebarEl, () => {
     clear(sidebarEl);
     sidebarEl.append(
       h(
         'div',
         { class: 'brand' },
-        h('span', { class: 'mark' }, appMark()),
+        h('span', { class: 'mark' }, icon('workspace')),
         h('span', { class: 'name' }, 'Big Three'),
-        h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Aparência e acessibilidade', title: 'Aparência', 'data-fk': 'appearance', onClick: openAppearance }, icon('sliders')),
       ),
-      h('button', { class: 'btn tonal new-btn', type: 'button', 'data-fk': 'new-conv', onClick: () => void ctx.newConversation() }, icon('plus'), 'Nova conversa', h('kbd', { 'aria-hidden': 'true' }, 'Ctrl+N')),
-      conversationList(),
-      modelsPanel(),
-      databasesPanel(),
-      updatesButton(),
+      h('button', { class: 'btn sidebar-action new-btn', type: 'button', 'data-fk': 'new-conv', onClick: () => void ctx.newConversation() }, icon('plus', 'sm'), 'Nova conversa', h('kbd', { 'aria-hidden': 'true' }, 'Ctrl+N')),
+      h('h2', { class: 'sidebar-section-head sidebar-history-heading' }, 'Conversas'),
+      history,
+      tools,
+      h('div', { class: 'sidebar-footer' },
+        h('button', { class: 'btn sidebar-action block', type: 'button', title: 'Aparência e acessibilidade', 'data-fk': 'appearance', onClick: openAppearance }, icon('sliders', 'sm'), 'Configurações'),
+        updatesButton()),
     );
+    history.scrollTop = historyTop;
+    tools.scrollTop = toolsTop;
   });
 }

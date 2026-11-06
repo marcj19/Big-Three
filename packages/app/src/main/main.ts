@@ -34,7 +34,7 @@ const confirmAccess = async ({ access, cwd, summary }: { access: 'edit' | 'full'
     cancelId: 0,
     title: 'Permitir que o modelo altere arquivos?',
     message: full ? 'Acesso TOTAL: o modelo pode rodar comandos e alterar arquivos sem pedir.' : 'O modelo poderá criar e editar arquivos.',
-    detail: `${summary}\n\nPasta: ${cwd}\n\nA autorização vale nesta conversa até você reduzir o acesso ou fechar o aplicativo.`,
+    detail: `${summary}\n\nPasta: ${cwd}\n\nEsta escolha fica salva nesta conversa. Você pode reduzi-la no seletor de acesso do chat.`,
   });
   return response === 1;
 };
@@ -45,6 +45,7 @@ const service = new AppService({
   updates,
   adapters: process.env.AIO_DEMO === '1' ? demoAdapters() : undefined,
   confirmAccess,
+  rememberConversationAccess: true,
   emit: (event: AppEvent) => win?.webContents.send('aio:event', event),
   pickFolder: async () => {
     const r = await dialog.showOpenDialog(win ?? undefined!, { properties: ['openDirectory'] });

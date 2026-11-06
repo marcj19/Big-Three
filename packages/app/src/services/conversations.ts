@@ -94,6 +94,13 @@ export class ConversationStore {
     });
   }
 
+  setAccessGrant(id: string, cwd: string, grant: ConversationMeta['accessGrant']): Promise<void> {
+    return this.update(id, (meta) => {
+      if (meta.cwd !== cwd) throw new Error('A pasta da conversa mudou. Selecione o acesso novamente.');
+      return { ...meta, accessGrant: grant };
+    });
+  }
+
   /** Remembers the model's own session so the next turn continues it instead of starting over. */
   setSession(id: string, provider: ProviderId, session: { id: string; upto: number } | undefined): Promise<void> {
     return this.update(id, (m) => {

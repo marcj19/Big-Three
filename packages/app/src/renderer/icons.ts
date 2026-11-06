@@ -20,6 +20,7 @@ function burst(cx: number, cy: number, rays: number, inner: number, long: number
 
 const UI: Record<string, string> = {
   plus: '<path d="M12 5v14M5 12h14"/>',
+  workspace: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9 5v14M6 9h1m-1 3h1"/>',
   file: '<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/>',
   send: '<path d="M12 19V5M5 12l7-7 7 7"/>',
   stop: '<rect x="7" y="7" width="10" height="10" rx="2.5" fill="currentColor" stroke="none"/>',
@@ -33,6 +34,7 @@ const UI: Record<string, string> = {
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/>',
+  branch: '<circle cx="7" cy="5" r="2.5"/><circle cx="7" cy="19" r="2.5"/><circle cx="17" cy="6" r="2.5"/><path d="M7 7.5v9m10-8c0 4.5-3 6-10 6"/>',
   sliders: '<path d="M4 7h9M19 7h1M4 17h1M11 17h9"/><circle cx="16" cy="7" r="2.5"/><circle cx="8" cy="17" r="2.5"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A2.5 2.5 0 0 1 7.5 4H16"/>',
   chevron: '<path d="M6 9l6 6 6-6"/>',
@@ -59,14 +61,12 @@ const BRAND = `
 <linearGradient id="g-gemini-tile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4658d4"/><stop offset="1" stop-color="#171b4d"/></linearGradient>
 <linearGradient id="g-gemini" x1="4" y1="3" x2="20" y2="21" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#8ab4ff"/><stop offset="0.55" stop-color="#c3a4f0"/><stop offset="1" stop-color="#ff9aa8"/></linearGradient>
 <linearGradient id="g-codex" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3fdcb0"/><stop offset="1" stop-color="#087056"/></linearGradient>
-<linearGradient id="g-app" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3a3a42"/><stop offset="1" stop-color="#121214"/></linearGradient>
 <linearGradient id="g-pg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4f86b8"/><stop offset="1" stop-color="#27527d"/></linearGradient>
 <linearGradient id="g-my" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#14a0bd"/><stop offset="1" stop-color="#005b73"/></linearGradient>
 <linearGradient id="g-or" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ec6454"/><stop offset="1" stop-color="#aa352a"/></linearGradient>
 <symbol id="b-claude" viewBox="0 0 32 32"><rect width="32" height="32" fill="url(#g-claude)"/><path d="${burst(16, 16, 12, 3.6, 10.6, 8.4)}" stroke="#fff" stroke-width="2.3" stroke-linecap="round" fill="none"/><rect width="32" height="32" fill="url(#gloss)"/></symbol>
 <symbol id="b-gemini" viewBox="0 0 32 32"><rect width="32" height="32" fill="url(#g-gemini-tile)"/><path transform="translate(4 4)" d="M12 2C12.9 7.7 16.3 11.1 22 12c-5.7.9-9.1 4.3-10 10-.9-5.7-4.3-9.1-10-10C7.7 11.1 11.1 7.7 12 2z" fill="url(#g-gemini)"/><rect width="32" height="32" fill="url(#gloss)"/></symbol>
 <symbol id="b-codex" viewBox="0 0 32 32"><rect width="32" height="32" fill="url(#g-codex)"/><path d="M10.5 11.5l5 4.5-5 4.5M17.5 21h5" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/><rect width="32" height="32" fill="url(#gloss)"/></symbol>
-<symbol id="b-app" viewBox="0 0 32 32"><rect width="32" height="32" fill="url(#g-app)"/><circle cx="12" cy="12.5" r="5.6" fill="#ee9f78" fill-opacity="0.95"/><circle cx="20.5" cy="12.5" r="5.6" fill="#7b95ff" fill-opacity="0.9"/><circle cx="16.3" cy="19.8" r="5.6" fill="#3fdcb0" fill-opacity="0.9"/><rect width="32" height="32" fill="url(#gloss)"/></symbol>
 <symbol id="db-postgres" viewBox="0 0 32 32"><rect width="32" height="32" fill="url(#g-pg)"/><path d="M8 9.5v13c0 1.9 3.6 3.3 8 3.3s8-1.4 8-3.3v-13z" fill="#fff"/><ellipse cx="16" cy="9.5" rx="8" ry="3.3" fill="#cfe1f4"/><path d="M8 14.6c0 1.9 3.6 3.3 8 3.3s8-1.4 8-3.3M8 19.2c0 1.9 3.6 3.3 8 3.3s8-1.4 8-3.3" stroke="#336791" stroke-width="1.5" fill="none"/><rect width="32" height="32" fill="url(#gloss)"/></symbol>
 <symbol id="db-mysql" viewBox="0 0 32 32"><rect width="32" height="32" fill="url(#g-my)"/><path d="M8 9.5v13c0 1.9 3.6 3.3 8 3.3s8-1.4 8-3.3v-13z" fill="#fff"/><ellipse cx="16" cy="9.5" rx="8" ry="3.3" fill="#bfe3ea"/><path d="M8 17.5c2.7-3.2 5.3-3.2 8 0s5.3 3.2 8 0" stroke="#f29111" stroke-width="2.8" stroke-linecap="round" fill="none"/><rect width="32" height="32" fill="url(#gloss)"/></symbol>
 <symbol id="db-oracle" viewBox="0 0 32 32"><rect width="32" height="32" fill="url(#g-or)"/><rect x="5.5" y="10.5" width="21" height="11" rx="5.5" fill="none" stroke="#fff" stroke-width="3.6"/><rect width="32" height="32" fill="url(#gloss)"/></symbol>`;
@@ -104,5 +104,4 @@ export type IconName = keyof typeof UI;
 /** A decorative interface icon; the control around it carries the accessible name. */
 export const icon = (name: IconName, extra = ''): SVGSVGElement => use(`i-${name}`, `i ${extra}`.trim(), 24);
 export const providerMark = (id: ProviderId): SVGSVGElement => use(`b-${id}`, 'logo', 32);
-export const appMark = (): SVGSVGElement => use('b-app', 'logo', 32);
 export const engineMark = (engine: Engine): SVGSVGElement => use(`db-${engine}`, 'logo', 32);

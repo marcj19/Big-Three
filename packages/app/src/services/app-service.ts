@@ -26,6 +26,7 @@ import { ConversationStore } from './conversations.js';
 import { RunManager } from './runs.js';
 import { RunJournal } from './run-journal.js';
 import { workspaceDirectory, workspaceFile } from './workspace.js';
+import { gitDiff, gitStatus } from './git.js';
 import { browserUrl } from '../shared/browser-url.js';
 import type { BrowserBounds, BrowserState } from '../shared/api.js';
 import { ATTACHMENT_COUNT_LIMIT, ATTACHMENT_FILE_LIMIT, ATTACHMENT_ONLY_PROMPT } from '../shared/api.js';
@@ -44,6 +45,8 @@ export interface AppServiceOptions {
   emit?: (event: AppEvent) => void;
   /** Asks the person (outside the web page) before a model may change files. Without it, writing is refused. */
   confirmAccess?: (request: AccessRequest) => Promise<boolean>;
+  /** The native host can reuse grants that were saved after its confirmation. */
+  rememberConversationAccess?: boolean;
   pickFolder?: () => Promise<string | null>;
   /** Overrides where the database broker and room server start from (tests). */
   brokerEntry?: string;
@@ -167,6 +170,17 @@ export class AppService implements Api {
     const meta = await this.store.get(z.string().parse(conversationId));
     return workspaceFile(meta.cwd, z.string().min(1).max(4096).parse(relativePath));
   }
+  async gitStatus(conversationId: string) {
+    const { cwd } = await this.store.get(z.string().parse(conversationId));
+    return gitStatus(cwd);
+  }
+  async gitDiff(conversationId: string, selection: unknown) {
+    const { cwd } = await this.store.get(z.string().parse(conversationId));
+    return gitDiff(cwd, z.object({
+      path: z.string().min(1).max(4096), previousPath: z.string().min(1).max(4096).optional(),
+      source: z.enum(['index', 'worktree', 'untracked']),
+    }).parse(selection));
+  }
   async runHistory(conversationId: string) { await this.store.get(z.string().parse(conversationId)); return this.journal.list(conversationId); }
   async browserState(): Promise<BrowserState> { return this.options.browser?.state() ?? { supported: false, url: '', title: '', loading: false, canBack: false, canForward: false }; }
   async browserNavigate(url: string): Promise<void> {
@@ -272,16 +286,24 @@ export class AppService implements Api {
   }
 
   private accessFor(meta: ConversationMeta): Access {
-    const grant = this.conversationAccess.get(meta.id);
-    return grant?.cwd === meta.cwd ? grant.level : 'read-only';
+    const saved = this.options.rememberConversationAccess && this.options.confirmAccess ? meta.accessGrant : undefined;
+    const grant = this.conversationAccess.get(meta.id) ?? saved;
+    return grant?.cwd === meta.cwd && (grant.level === 'edit' || grant.level === 'full') ? grant.level : 'read-only';
   }
 
-  private async authorizeAccess(meta: ConversationMeta, level: Exclude<Access, 'read-only'>, summary: string): Promise<void> {
+  private async applyAccess(meta: ConversationMeta, level: Access, summary: string): Promise<void> {
     if (this.accessRequests.has(meta.id)) throw new Error('Já há uma confirmação de acesso pendente nesta conversa.');
     this.accessRequests.add(meta.id);
     try {
-      const ok = await this.options.confirmAccess?.({ access: level, cwd: meta.cwd, summary });
-      if (!ok) throw new Error('Write access was not confirmed, so nothing was started');
+      if (level !== 'read-only' && RANK[level] > RANK[this.accessFor(meta)]) {
+        const ok = await this.options.confirmAccess?.({ access: level, cwd: meta.cwd, summary });
+        if (!ok) throw new Error('Write access was not confirmed, so nothing was started');
+      }
+      if (this.options.rememberConversationAccess && this.options.confirmAccess) {
+        const grant = level === 'read-only' ? undefined : { cwd: meta.cwd, level };
+        await this.store.setAccessGrant(meta.id, meta.cwd, grant);
+      }
+      // Keep revocations in memory too, so a concurrent request with older metadata sees the new level.
       this.conversationAccess.set(meta.id, { cwd: meta.cwd, level });
     } finally {
       this.accessRequests.delete(meta.id);
@@ -293,12 +315,7 @@ export class AppService implements Api {
     const meta = await this.store.get(id);
     if (this.runs.isBusy(id)) throw new Error('Altere o acesso depois que a execução terminar.');
     if (this.accessRequests.has(id)) throw new Error('Já há uma confirmação de acesso pendente nesta conversa.');
-    if (level === 'read-only') this.conversationAccess.delete(id);
-    else if (RANK[level] > RANK[this.accessFor(meta)]) {
-      await this.authorizeAccess(meta, level, meta.title);
-    } else {
-      this.conversationAccess.set(id, { cwd: meta.cwd, level });
-    }
+    if (level !== this.accessFor(meta)) await this.applyAccess(meta, level, meta.title);
     return level;
   }
   renameConversation(id: string, title: string): Promise<void> {
@@ -335,7 +352,7 @@ export class AppService implements Api {
     if (this.accessRequests.has(meta.id)) throw new Error('Aguarde a confirmação de acesso desta conversa.');
     if (level !== 'read-only' && RANK[level] > RANK[this.accessFor(meta)]) {
       // Asked here, in the main process, because the window is a web page and could claim the person said yes.
-      await this.authorizeAccess(meta, level,
+      await this.applyAccess(meta, level,
           input.spec.kind === 'plan'
             ? `${input.spec.executor} will carry out the plan`
             : input.spec.kind === 'flow'

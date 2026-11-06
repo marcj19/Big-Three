@@ -84,6 +84,8 @@ export interface ConversationMeta {
   cwd: string;
   createdAt: string;
   updatedAt: string;
+  /** Desktop permission approved for this conversation and folder. */
+  accessGrant?: { cwd: string; level: 'edit' | 'full' };
   /** Each model's own CLI session in this conversation, and how much of the transcript it has already seen. */
   sessions?: Partial<Record<ProviderId, { id: string; upto: number }>>;
 }
@@ -239,6 +241,8 @@ export interface Api {
   pickFolder(): Promise<string | null>;
   workspaceDirectory(conversationId: string, relativePath?: string): Promise<WorkspaceDirectory>;
   workspaceFile(conversationId: string, relativePath: string): Promise<WorkspaceFile>;
+  gitStatus(conversationId: string): Promise<GitStatus>;
+  gitDiff(conversationId: string, selection: GitSelection): Promise<GitDiff>;
   runHistory(conversationId: string): Promise<RunRecord[]>;
   browserState(): Promise<BrowserState>;
   browserNavigate(url: string): Promise<void>;
@@ -273,7 +277,7 @@ export const API_METHODS = [
   'usage',
   'accountQuotas',
   'pickFolder',
-  'workspaceDirectory', 'workspaceFile', 'runHistory', 'browserState', 'browserNavigate', 'browserCommand', 'browserBounds',
+  'workspaceDirectory', 'workspaceFile', 'gitStatus', 'gitDiff', 'runHistory', 'browserState', 'browserNavigate', 'browserCommand', 'browserBounds',
 ] as const satisfies readonly ApiMethod[];
 
 // Fails to compile if a method was added to `Api` but not to API_METHODS.
@@ -283,6 +287,13 @@ export const _allMethodsListed: Missing extends never ? true : never = true;
 export interface WorkspaceEntry { name: string; path: string; kind: 'directory' | 'file' | 'link' }
 export interface WorkspaceDirectory { path: string; entries: WorkspaceEntry[]; truncated: boolean }
 export interface WorkspaceFile { path: string; text: string; bytes: number; truncated: boolean; binary: boolean }
+export interface GitChange { path: string; previousPath?: string; index: string; worktree: string }
+export type GitStatus = { kind: 'unavailable' | 'not-repository' } | {
+  kind: 'repository'; branch: string | null; upstream?: string; origin?: string;
+  ahead: number; behind: number; changes: GitChange[]; truncated: boolean;
+};
+export interface GitSelection { path: string; previousPath?: string; source: 'index' | 'worktree' | 'untracked' }
+export interface GitDiff { text: string; truncated: boolean; binary?: boolean }
 export interface BrowserBounds { visible: boolean; x: number; y: number; width: number; height: number }
 export interface BrowserState { supported: boolean; url: string; title: string; loading: boolean; canBack: boolean; canForward: boolean; error?: string }
 export interface WorkEntry {

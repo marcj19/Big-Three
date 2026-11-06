@@ -184,6 +184,34 @@ describe('AppService', () => {
       await app.setConversationAccess(conv.id, 'edit');
       expect(asked).toEqual(['edit', 'full', 'edit']);
     });
+
+    it('remembers a desktop approval across restarts, only for the selected conversation, until revoked', async () => {
+      const claude = stub('claude', 'OK');
+      const options = { adapters: { claude }, rememberConversationAccess: true };
+      const { app, workdir, configDir } = await makeApp({ ...options, confirmAccess: async () => true });
+      const conv = await app.createConversation({ cwd: workdir });
+      const other = await app.createConversation({ cwd: workdir });
+      await app.setConversationAccess(conv.id, 'full');
+
+      const confirmAccess = vi.fn(async () => false);
+      const restarted = await makeApp({ ...options, configDir, confirmAccess });
+      expect((await restarted.app.getConversation(conv.id)).access).toBe('full');
+      expect((await restarted.app.getConversation(other.id)).access).toBe('read-only');
+      const input = chat(conv.id, { spec: { kind: 'chat', providers: ['claude'], access: 'full' } });
+      await restarted.app.startRun(input);
+      await restarted.done(conv.id);
+      expect(claude.requests.at(-1)?.access).toBe('full');
+      expect(confirmAccess).not.toHaveBeenCalled();
+
+      const development = await makeApp({ configDir, adapters: { claude } });
+      await expect(development.app.startRun(input)).rejects.toThrow(/not confirmed/);
+
+      await restarted.app.setConversationAccess(conv.id, 'read-only');
+      const reopened = await makeApp({ ...options, configDir, confirmAccess });
+      expect((await reopened.app.getConversation(conv.id)).access).toBe('read-only');
+      await expect(reopened.app.startRun(input)).rejects.toThrow(/not confirmed/);
+      expect(confirmAccess).toHaveBeenCalledTimes(1);
+    });
     const planWith = (executorAccess: 'edit' | 'full'): StartRun['spec'] => ({ kind: 'plan', planner: 'claude', executor: 'claude', executorAccess });
 
     it('is refused when nothing confirms it, and nothing starts', async () => {
