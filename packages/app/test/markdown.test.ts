@@ -29,6 +29,13 @@ describe('inline Markdown', () => {
     expect(parseInline('`**not bold**`')).toEqual([{ kind: 'code', value: '**not bold**' }]);
   });
 
+  it('uses the decoded text inside emphasis while preserving literal code', () => {
+    expect(parseInline('**Papel&#x20;**`Help Desk`**:** `&#x20;`')).toEqual([
+      { kind: 'bold', value: 'Papel ' }, { kind: 'code', value: 'Help Desk' },
+      { kind: 'bold', value: ':' }, { kind: 'text', value: ' ' }, { kind: 'code', value: '&#x20;' },
+    ]);
+  });
+
   it('keeps markup and links as plain text, never as anything the window would interpret', () => {
     const parts = parseInline('<img src=x onerror=alert(1)> [click](javascript:alert(1)) <script>x</script>');
     expect(parts).toHaveLength(1);
@@ -102,6 +109,22 @@ describe('Markdown blocks', () => {
     const blocks = parseMarkdown(text);
     expect(blocks[0]).toMatchObject({ kind: 'table', rows: [[[{ kind: 'text', value: 'Raiz oleosa' }], [{ kind: 'bold', value: 'Exemplo' }]]] });
     expect(blocks[1]).toMatchObject({ kind: 'paragraph', inline: [{ kind: 'link', value: 'Fonte', href: 'https://example.com/produto' }] });
+  });
+
+  it('shows only the label of local file links inside nested lists', () => {
+    const escaped = '[\\`chamados/[number]/page.tsx\\`]\\(file:///D:/Projects/Milvus%20Programador/app/src/app/(app)/chamados/%5Bnumber%5D/page.tsx#L317-L458)';
+    const normal = '[`permissions.ts`](file:///D:/Projects/Milvus%20Programador/app/src/lib/permissions.ts#L38-L55)';
+    const blocks = parseMarkdown(`1. **Triagem**\n   - Abra (${escaped}) e consulte ${normal}.`);
+    expect(blocks[0]).toMatchObject({ kind: 'list', ordered: true, items: [{ blocks: [
+      { kind: 'paragraph', inline: [{ kind: 'bold', value: 'Triagem' }] },
+      { kind: 'list', items: [{ blocks: [{ kind: 'paragraph', inline: [
+        { kind: 'text', value: 'Abra (' }, { kind: 'code', value: 'chamados/[number]/page.tsx' },
+        { kind: 'text', value: ') e consulte ' }, { kind: 'code', value: 'permissions.ts' }, { kind: 'text', value: '.' },
+      ] }] }] },
+    ] }] });
+    expect(parseInline('[Arquivo](file:///home/test/projeto/a.ts)')).toEqual([{ kind: 'text', value: 'Arquivo' }]);
+    expect(parseMarkdown('```md\n' + escaped + '\n```')).toEqual([{ kind: 'code', language: 'md', value: escaped }]);
+    expect(parseInline('``' + escaped + '``')).toEqual([{ kind: 'code', value: escaped }]);
   });
   it('preserves nested lists, tasks, strikethrough and ordered numbering', () => {
     const blocks = parseMarkdown('3. Etapa\n   - [x] Conferido\n   - [ ] ~~Antigo~~\n\n> **Nota**\n>\n> Texto');

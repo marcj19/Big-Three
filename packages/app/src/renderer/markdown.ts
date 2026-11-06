@@ -1,4 +1,4 @@
-import { Lexer, type Token, type Tokens } from 'marked';
+import { Lexer, Marked, Tokenizer, type Token, type Tokens } from 'marked';
 
 /** Tokens only; remote HTML is never handed to a browser parser. */
 export type Inline = { kind: 'text' | 'bold' | 'italic' | 'code' | 'strike' | 'link' | 'break'; value: string; href?: string; children?: Inline[] };
@@ -16,6 +16,28 @@ export function safeLink(value: string): string | undefined {
   catch { return undefined; }
 }
 
+const localFile = /^file:\/\/\//i;
+const escapedFileLink = /\[(?:\\?`[^`\r\n]+\\?`|[^\[\]\r\n]+)\]\\\((?=<?file:\/\/\/)/i;
+const chatMarkdown = new Marked().use({
+  gfm: true,
+  extensions: [{
+    name: 'escapedFileLink', level: 'inline',
+    start(src) { return escapedFileLink.exec(src)?.index; },
+    tokenizer(src) {
+      if (src[0] !== '[') return;
+      const match = escapedFileLink.exec(src);
+      if (match?.index !== 0) return;
+      // Let Marked find the matching parenthesis, including paths such as app/(app)/page.tsx.
+      const opener = match[0].length - 2;
+      const tokenizer = new Tokenizer();
+      new Lexer({ gfm: true, tokenizer });
+      const link = tokenizer.link(src.slice(0, opener) + src.slice(opener + 1));
+      if (link?.type !== 'link' || !localFile.test(link.href)) return;
+      return { ...link, raw: src.slice(0, link.raw.length + 1) };
+    },
+  }],
+});
+
 function inlineTokens(tokens: Token[]): Inline[] {
   const result: Inline[] = [];
   const text = (value: string) => {
@@ -29,12 +51,20 @@ function inlineTokens(tokens: Token[]): Inline[] {
       case 'strong': case 'em': case 'del': {
         const span = token as Tokens.Strong;
         const children = inlineTokens(span.tokens);
-        result.push({ kind: token.type === 'strong' ? 'bold' : token.type === 'em' ? 'italic' : 'strike', value: span.text,
-          ...(children.some((child) => child.kind !== 'text') ? { children } : {}) }); break;
+        const plain = children.every((child) => child.kind === 'text');
+        result.push({ kind: token.type === 'strong' ? 'bold' : token.type === 'em' ? 'italic' : 'strike',
+          value: plain ? children.map((child) => child.value).join('') : span.text, ...(plain ? {} : { children }) });
+        break;
       }
       case 'codespan': result.push({ kind: 'code', value: token.text }); break;
       case 'link': case 'image': {
         const link = token as Tokens.Link;
+        if (token.type === 'link' && link.text && localFile.test(link.href)) {
+          const code = /^\\`([^`\r\n]+)\\`$/.exec(link.text);
+          if (code) result.push({ kind: 'code', value: code[1]! });
+          else result.push(...inlineTokens(link.tokens));
+          break;
+        }
         const href = safeLink(link.href);
         if (!href) text(token.raw);
         else result.push({ kind: 'link', value: link.text || href, href, ...(link.tokens ? { children: inlineTokens(link.tokens) } : {}) });
@@ -50,7 +80,7 @@ function inlineTokens(tokens: Token[]): Inline[] {
 }
 export function parseInline(text: string): Inline[] {
   if (/^[\d\s*+\-/=().,]+$/.test(text)) return [{ kind: 'text', value: text }];
-  return inlineTokens(Lexer.lexInline(text, { gfm: true }));
+  return inlineTokens(Lexer.lexInline(text, chatMarkdown.defaults));
 }
 
 /** Repairs escaped table borders and wrapped links pasted from another chat, outside code fences. */
@@ -92,4 +122,4 @@ function blocks(tokens: Token[], depth = 0): Block[] {
   }
   return result;
 }
-export function parseMarkdown(text: string): Block[] { return blocks(Lexer.lex(normalizeChatMarkdown(text), { gfm: true })); }
+export function parseMarkdown(text: string): Block[] { return blocks(chatMarkdown.lexer(normalizeChatMarkdown(text))); }
