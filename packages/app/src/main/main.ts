@@ -42,12 +42,41 @@ const confirmAccess = async ({ access, cwd, summary }: { access: 'edit' | 'full'
   return response === 1;
 };
 
+const PERMISSION_DIALOG = {
+  web: {
+    button: 'Permitir internet',
+    title: 'Permitir que os modelos usem a internet?',
+    message: 'Os modelos poderão pesquisar na web e abrir páginas (Claude e Codex, e os colegas que o líder consultar).',
+    detail: 'Cuidado: uma página pode conter instruções escondidas para enganar o modelo, e o modelo pode enviar trechos da conversa em endereços que abrir.',
+  },
+  browser: {
+    button: 'Permitir navegador',
+    title: 'Permitir que o Claude controle o seu navegador?',
+    message: 'O Claude poderá abrir páginas e agir no seu Chrome, inclusive em sites onde você já está conectado (e-mail, banco, redes sociais).',
+    detail: 'Exige a extensão Claude in Chrome. Ele age com a sua conta nesses sites. Só permita se for realmente necessário.',
+  },
+} as const;
+const confirmPermission = async ({ permission, cwd, summary }: { permission: 'web' | 'browser'; cwd: string; summary: string }) => {
+  const text = PERMISSION_DIALOG[permission];
+  const { response } = await dialog.showMessageBox(win ?? undefined!, {
+    type: 'warning',
+    buttons: ['Cancelar', text.button],
+    defaultId: 0,
+    cancelId: 0,
+    title: text.title,
+    message: text.message,
+    detail: `${text.detail}\n\nConversa: ${summary}\nPasta: ${cwd}\n\nA permissão vale só nesta conversa e só até você desligá-la ou fechar o app.`,
+  });
+  return response === 1;
+};
+
 const service = new AppService({
   configDir: configDir(),
   browser,
   updates,
   adapters: process.env.AIO_DEMO === '1' ? demoAdapters() : undefined,
   confirmAccess,
+  confirmPermission,
   rememberConversationAccess: true,
   emit: (event: AppEvent) => win?.webContents.send('aio:event', event),
   pickFolder: async () => {

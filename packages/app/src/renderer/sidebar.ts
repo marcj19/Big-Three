@@ -135,7 +135,7 @@ function modelsPanel(): HTMLElement {
     const lines = usage.map(([id, u]) => {
       const tokens = u.inputTokens + u.outputTokens;
       const limited = u.limitedUntil && u.limitedUntil > Date.now() ? ' · em pausa' : '';
-      return `${NAMES[id as keyof typeof NAMES] ?? id}: ${u.turns} turno${u.turns === 1 ? '' : 's'}, ${tokens.toLocaleString('pt-BR')} tokens${limited}`;
+      return `${NAMES[id as keyof typeof NAMES] ?? id}: ${u.turns} turno${u.turns === 1 ? '' : 's'}, ${tokens.toLocaleString('pt-BR')} tokens processados${limited}`;
     });
     body.append(h('div', { class: 'usage-line', 'aria-label': 'Uso nesta sessão' }, h('b', {}, 'Uso nesta sessão do app'), h('br'), ...lines.flatMap((l, i) => (i ? [h('br'), l] : [l]))));
   }

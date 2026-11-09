@@ -96,7 +96,7 @@ export async function runFlow(room: Room, input: FlowInput): Promise<PatternResu
   let lastVerdict: Verdict | undefined; // reported at the end
   let final = '';
 
-  const base = (): TurnOptions => ({ cwd: input.cwd, signal: input.signal, timeoutMs: input.timeoutMs, withPeerTools: input.withPeerTools, mcpServers: input.mcpServers });
+  const base = (): TurnOptions => ({ cwd: input.cwd, signal: input.signal, timeoutMs: input.timeoutMs, withPeerTools: input.withPeerTools, mcpServers: input.mcpServers, permissions: input.permissions });
   const emit = (index: number, step: FlowStep, status: StepStatus, extra: Partial<StepEvent> = {}) =>
     input.onStep?.({ index, total, kind: step.kind, provider: step.provider, status, ...extra });
   const fail = (index: number, step: FlowStep, r: TurnResult): PatternResult => {

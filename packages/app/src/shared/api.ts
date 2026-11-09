@@ -7,6 +7,15 @@ import type { PeerActivity } from '@aio/room';
 
 export type ProviderId = 'claude' | 'gemini' | 'codex';
 export type Access = 'read-only' | 'edit' | 'full';
+/** What a model may reach beyond the project folder. Off by default; turning one on is confirmed by the person. */
+export type PermissionKey = 'web' | 'browser';
+export type PermissionsView = Record<PermissionKey, boolean>;
+export const PERMISSION_KEYS: readonly PermissionKey[] = ['web', 'browser'];
+/**
+ * Which models' CLIs can enforce each permission. For the others the setting has no effect, and the window says so
+ * instead of showing a switch that would promise something the CLI cannot do.
+ */
+export const PERMISSION_SUPPORT: Record<PermissionKey, readonly ProviderId[]> = { web: ['claude', 'codex'], browser: ['claude'] };
 export type Engine = 'postgres' | 'mysql' | 'oracle';
 export type Verdict = 'approve' | 'changes' | 'unclear';
 
@@ -229,6 +238,9 @@ export interface Api {
   createConversation(input: { cwd: string; title?: string }): Promise<ConversationMeta>;
   getConversation(id: string): Promise<{ meta: ConversationMeta; messages: MessageView[]; access: Access }>;
   setConversationAccess(id: string, access: Access): Promise<Access>;
+  getPermissions(id: string): Promise<PermissionsView>;
+  /** Turning one on is confirmed in a native dialog in the main process; turning one off never asks. */
+  setPermission(id: string, permission: PermissionKey, enabled: boolean): Promise<PermissionsView>;
   renameConversation(id: string, title: string): Promise<void>;
   deleteConversation(id: string): Promise<void>;
 
@@ -270,6 +282,8 @@ export const API_METHODS = [
   'createConversation',
   'getConversation',
   'setConversationAccess',
+  'getPermissions',
+  'setPermission',
   'renameConversation',
   'deleteConversation',
   'startRun',

@@ -14,6 +14,8 @@ import type {
   ConversationMeta,
   MessageView,
   ModelOption,
+  PermissionKey,
+  PermissionsView,
   ProviderStatus,
   StartRun,
   UsageView,
@@ -40,6 +42,12 @@ export interface AccessRequest {
   summary: string;
 }
 
+export interface PermissionRequest {
+  permission: PermissionKey;
+  cwd: string;
+  summary: string;
+}
+
 export interface AppServiceOptions {
   /** Folder for connections.json, the audit log and the conversations. */
   configDir: string;
@@ -48,6 +56,8 @@ export interface AppServiceOptions {
   emit?: (event: AppEvent) => void;
   /** Asks the person (outside the web page) before a model may change files. Without it, writing is refused. */
   confirmAccess?: (request: AccessRequest) => Promise<boolean>;
+  /** Asks the person, outside the web page, before a model may use the web or drive the browser. Without it, neither can be turned on. */
+  confirmPermission?: (request: PermissionRequest) => Promise<boolean>;
   /** The native host can reuse grants that were saved after its confirmation. */
   rememberConversationAccess?: boolean;
   pickFolder?: () => Promise<string | null>;
@@ -131,6 +141,9 @@ export class AppService implements Api {
   private readonly logins = new Map<ProviderId, AbortController>();
   private readonly conversationAccess = new Map<string, { cwd: string; level: Access }>();
   private readonly accessRequests = new Set<string>();
+  /** Kept in memory only: a restart puts every permission back to off, so nothing stays open without being asked again. */
+  private readonly permissionGrants = new Map<string, { cwd: string; granted: PermissionsView }>();
+  private readonly permissionRequests = new Set<string>();
   private quotaRead?: Promise<AccountQuota[]>;
   private quotaCache?: { at: number; value: AccountQuota[] };
 
@@ -347,6 +360,38 @@ export class AppService implements Api {
     if (level !== this.accessFor(meta)) await this.applyAccess(meta, level, meta.title);
     return level;
   }
+  private permissionsFor(meta: ConversationMeta): PermissionsView {
+    const grant = this.permissionGrants.get(meta.id);
+    return grant?.cwd === meta.cwd ? { ...grant.granted } : { web: false, browser: false };
+  }
+
+  async getPermissions(id: string): Promise<PermissionsView> {
+    return this.permissionsFor(await this.store.get(id));
+  }
+
+  async setPermission(id: string, permission: PermissionKey, enabled: boolean): Promise<PermissionsView> {
+    const key = z.enum(['web', 'browser']).parse(permission);
+    const on = z.boolean().parse(enabled);
+    const meta = await this.store.get(id);
+    if (this.runs.isBusy(id)) throw new Error('Altere as permissões depois que a execução terminar.');
+    if (this.permissionRequests.has(id)) throw new Error('Já há uma confirmação de permissão pendente nesta conversa.');
+    const current = this.permissionsFor(meta);
+    if (current[key] !== on) {
+      this.permissionRequests.add(id);
+      try {
+        // Asked here, in the main process: the window is a web page and could claim the person said yes.
+        if (on && !(await this.options.confirmPermission?.({ permission: key, cwd: meta.cwd, summary: meta.title }))) {
+          throw new Error('Permission was not confirmed, so nothing changed');
+        }
+        current[key] = on;
+        this.permissionGrants.set(id, { cwd: meta.cwd, granted: current });
+      } finally {
+        this.permissionRequests.delete(id);
+      }
+    }
+    return this.permissionsFor(meta);
+  }
+
   renameConversation(id: string, title: string): Promise<void> {
     return this.store.rename(id, title);
   }
@@ -355,6 +400,7 @@ export class AppService implements Api {
     if (this.accessRequests.has(id)) throw new Error('Feche a confirmação de acesso antes de apagar a conversa.');
     await this.store.remove(id);
     this.conversationAccess.delete(id);
+    this.permissionGrants.delete(id);
     await this.journal.removeConversation(id);
   }
 
@@ -394,7 +440,8 @@ export class AppService implements Api {
     }
     if (this.options.updates?.state().phase === 'installing') throw new Error('O Big Three está reiniciando para atualizar.');
     if (mobile && !mobile.authorized()) throw new MobilePermissionError();
-    return { runId: await this.runs.start(input, meta.cwd, level !== 'read-only', mobile?.provider) };
+    // Runs started from the phone never get more than the default: a permission is granted at the desk.
+    return { runId: await this.runs.start(input, meta.cwd, level !== 'read-only', mobile?.provider, mobile ? undefined : this.permissionsFor(meta)) };
   }
 
   async cancelRun(runId: string): Promise<void> {

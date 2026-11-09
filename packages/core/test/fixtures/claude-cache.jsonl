@@ -1,0 +1,1 @@
+{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"c0ffee00-1111-2222-3333-444455556666","total_cost_usd":0.0316,"usage":{"input_tokens":3,"cache_creation_input_tokens":7174,"cache_read_input_tokens":15132,"output_tokens":4}}

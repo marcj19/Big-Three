@@ -72,6 +72,11 @@ export class CodexAdapter extends CliAdapter {
     }
     if (req.model) args.push('--model', req.model);
     if (req.effort) args.push('-c', `model_reasoning_effort=${toml(req.effort)}`);
+    // Codex searches the web on its own unless told otherwise, so "not granted" has to say "disabled".
+    args.push('-c', `web_search=${toml(req.permissions?.web ? 'live' : 'disabled')}`);
+    // The ChatGPT "apps" (connectors) are a second way out: they brought their own web search, and they act on the
+    // person's linked accounts. No permission in this app covers them, so they stay off.
+    args.push('-c', 'features.apps=false');
     for (const image of req.attachmentImages ?? []) args.push('--image', image);
     for (const s of req.mcpServers ?? []) {
       if (!/^[A-Za-z0-9_-]+$/.test(s.name)) throw new Error(`Invalid MCP server name: ${s.name.slice(0, 30)}`);

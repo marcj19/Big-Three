@@ -160,6 +160,12 @@ connections the models may query.
 
 - **Conversation access.** A native dialog confirms each increase in access. The main process keeps the grant for that
   conversation while the app is open. Usage limit fallback applies only to read-only runs.
+- **Web and browser permissions.** The **Permissions** chip under the text field has two switches, **Internet** (search
+  and open pages) and **Browser** (Claude driving your Chrome through *Claude in Chrome*). Both start off. Turning one on
+  asks in a native dialog, applies to that conversation only, and is forgotten when you close the app. Claude and Codex
+  honour Internet; only Claude has a browser; Gemini's CLI offers no such switch, so the window says so. Colleagues that
+  are consulted inherit Internet but never the browser. Codex's own connectors ("apps") stay off, because they bring their
+  own web search and act on your linked accounts.
 - **Colleagues cannot change anything.** A consulted model runs read-only and gets neither the room tools nor the database tools,
   so questions cannot fan out.
 - **Database defence in depth:** a `SELECT`-only database user (the layer that matters), a SQL guard, read-only

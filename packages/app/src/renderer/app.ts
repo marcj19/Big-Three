@@ -101,6 +101,7 @@ async function openConversation(id: string, keepScroll = false): Promise<void> {
     if (ticket !== selection) return;
     state.current = conversation;
     reconcilePending();
+    void api.getPermissions(id).then((permissions) => { state.permissionsOf[id] = permissions; renderComposer(); }, () => {});
   } catch (err) {
     if (ticket !== selection) return;
     state.current = undefined;

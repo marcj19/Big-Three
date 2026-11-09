@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { toolContext } from './tool-context.js';
 import type { Adapter, AgentEvent, McpServerSpec, ProviderId, UserQuestion } from '@aio/core';
@@ -134,7 +135,8 @@ export class Room {
     const wanted = launch.team ? (Object.keys(launch.team) as ProviderId[]) : this.providers;
     const peers = this.providers.filter((p) => p !== provider && wanted.includes(p));
     if (peers.length === 0) return undefined;
-    return [peerServerSpec({ ...launch, self: provider, peers, transcriptFile: (this.transcript as FileTranscript).file, cwd: options.cwd ?? this.config.cwd })];
+    // Colleagues share the lead's web permission, and nothing else: they never get to drive the browser.
+    return [peerServerSpec({ ...launch, self: provider, peers, transcriptFile: (this.transcript as FileTranscript).file, cwd: options.cwd ?? this.config.cwd, web: options.permissions?.web === true })];
   }
 
   private async execute(provider: ProviderId, instruction: string, options: TurnOptions, snapshot: RoomMessage[]): Promise<TurnResult> {
@@ -199,6 +201,7 @@ export class Room {
         systemPrompt,
         cwd: options.cwd ?? this.config.cwd,
         access: options.access ?? 'read-only',
+        permissions: options.permissions,
         model: options.model || undefined,
         effort: options.effort || undefined,
         sessionId: options.sessionId || undefined,
@@ -286,7 +289,26 @@ export class Room {
       rateLimited: status === 'error' && looksRateLimited(error),
     };
     this.usage.record(result);
+    if (peer) await this.foldConsultUsage();
     emit?.({ type: 'turn_end', result });
     return { result, question };
+  }
+
+  private consultsSeen = 0;
+  /** Adds what the colleagues spent answering (reported by the peer server, another process) to the room's usage. */
+  private async foldConsultUsage(): Promise<void> {
+    const file = this.config.peerServer?.usageFile;
+    if (!file) return;
+    let raw = '';
+    try { raw = await readFile(file, 'utf8'); } catch { return; }
+    const lines = raw.split('\n').filter((line) => line.trim());
+    for (const line of lines.slice(this.consultsSeen)) {
+      try {
+        const c = JSON.parse(line) as { peer?: ProviderId; status?: TurnResult['status']; usage?: TurnResult['usage'] };
+        if (!c.peer || !c.usage || !this.config.adapters[c.peer]) continue;
+        this.usage.record({ provider: c.peer, status: c.status ?? 'ok', text: '', usage: c.usage, rateLimited: false });
+      } catch { /* a torn line is skipped */ }
+    }
+    this.consultsSeen = lines.length;
   }
 }

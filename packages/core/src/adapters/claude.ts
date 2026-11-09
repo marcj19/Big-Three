@@ -57,6 +57,14 @@ export class ClaudeAdapter extends CliAdapter {
     if (req.systemPrompt) args.push('--append-system-prompt', req.systemPrompt);
     for (const dir of req.attachmentDirectories ?? []) args.push('--add-dir', dir);
 
+    // Headless mode cannot ask for approval, so what a run may use is decided up front. Web tools are blocked by
+    // default (the model would otherwise burn a turn trying one and being refused) and Chrome control is switched
+    // off explicitly, because the CLI can be configured to start it on its own.
+    const allowed: string[] = [];
+    if (req.permissions?.web) allowed.push('WebSearch', 'WebFetch');
+    else args.push('--disallowedTools', 'WebSearch,WebFetch');
+    args.push(req.permissions?.browser ? '--chrome' : '--no-chrome');
+
     let cleanup: BuiltInvocation['cleanup'];
     if (req.mcpServers?.length) {
       const dir = await mkdtemp(path.join(os.tmpdir(), 'aio-claude-'));
@@ -69,8 +77,9 @@ export class ClaudeAdapter extends CliAdapter {
       // --strict-mcp-config: ignore any other MCP servers the user has configured globally.
       args.push('--mcp-config', file, '--strict-mcp-config');
       // Headless mode cannot ask for approval, so pre-approve exactly these servers' tools.
-      args.push('--allowedTools', req.mcpServers.map((s) => `mcp__${s.name}`).join(','));
+      allowed.push(...req.mcpServers.map((s) => `mcp__${s.name}`));
     }
+    if (allowed.length) args.push('--allowedTools', allowed.join(','));
     return { args, stdin: req.prompt, cleanup };
   }
 
@@ -145,9 +154,13 @@ export class ClaudeAdapter extends CliAdapter {
           ...(utilization !== undefined && utilization >= 0 && utilization <= 1 ? { usedPercent: utilization * 100 } : {}) });
       } else if (type === 'result') {
         const usage = isRecord(raw.usage) ? raw.usage : {};
+        // Claude Code reports fresh input apart from what it wrote to and read from the prompt cache. All of it goes
+        // through the model on every turn (the system prompt and tools alone are ~20k tokens), so count all of it:
+        // "input_tokens" alone shows 3 for a turn that processed 23,000.
+        const parts = [usage.input_tokens, usage.cache_creation_input_tokens, usage.cache_read_input_tokens].map(num);
         events.push({
           type: 'usage',
-          inputTokens: num(usage.input_tokens),
+          inputTokens: parts.some((n) => n !== undefined) ? parts.reduce<number>((sum, n) => sum + (n ?? 0), 0) : undefined,
           outputTokens: num(usage.output_tokens),
           costUsd: num(raw.total_cost_usd),
         });

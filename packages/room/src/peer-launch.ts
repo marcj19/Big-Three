@@ -13,6 +13,11 @@ export interface PeerServerLaunch {
   activityFile?: string;
   /** When this file disappears, the desktop run has stopped. */
   leaseFile?: string;
+  /**
+   * One JSON line per consultation (who answered and what it used). The peer server is another process, so this file
+   * is how the app learns what the colleagues spent; the room folds it into its usage after each turn.
+   */
+  usageFile?: string;
   /** Who the lead may consult, with the model each one uses. Omitted: everyone else, on their default model. */
   team?: Team;
   /** Most asks one model may make during one turn; a loop of models consulting each other would burn quota. */
@@ -29,6 +34,8 @@ export interface PeerServerSpecInput extends Omit<PeerServerLaunch, 'team'> {
   peers: ProviderId[];
   transcriptFile: string;
   cwd: string;
+  /** The lead may use the web, so the colleagues it consults may too. */
+  web?: boolean;
 }
 
 /**
@@ -52,6 +59,8 @@ export function peerServerSpec(input: PeerServerSpecInput): McpServerSpec {
       AIO_ROOM_MAX_ASKS: String(input.maxAsks ?? 6),
       ...(input.activityFile ? { AIO_ROOM_ACTIVITY_FILE: input.activityFile } : {}),
       ...(input.leaseFile ? { AIO_ROOM_LEASE_FILE: input.leaseFile } : {}),
+      ...(input.usageFile ? { AIO_ROOM_USAGE_FILE: input.usageFile } : {}),
+      ...(input.web ? { AIO_ROOM_WEB: '1' } : {}),
       ...(input.team ? { AIO_ROOM_TEAM: JSON.stringify(input.team) } : {}),
       // Inside Electron the "node" to run is the app binary itself, which must be told to behave as plain node.
       ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),

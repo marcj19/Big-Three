@@ -44,8 +44,8 @@ export function openQuotas(): void {
         }),
         quota?.checkedAt ? h('p', { class: 'quota-updated' }, `Última leitura: ${date(quota.checkedAt)}`) : '',
         limited ? h('p', { class: 'quota-pause' }, `Pausa do orquestrador até ${date(usage!.limitedUntil!)}. Este horário pode ser uma espera local após erro, e não a renovação da conta.`) : '',
-        h('div', { class: 'quota-local' }, h('b', {}, 'Nesta sessão do app'), h('span', {}, `${usage?.turns ?? 0} turnos · ${((usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0)).toLocaleString('pt-BR')} tokens reportados`),
-          h('span', {}, 'Contagem local; não mede a porcentagem da assinatura.')),
+        h('div', { class: 'quota-local' }, h('b', {}, 'Nesta sessão do app'), h('span', {}, `${usage?.turns ?? 0} turnos · ${((usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0)).toLocaleString('pt-BR')} tokens processados${usage?.turns ? ` (cerca de ${Math.round(((usage.inputTokens) + (usage.outputTokens)) / usage.turns).toLocaleString('pt-BR')} por turno)` : ''}`),
+          h('span', {}, 'Entrada e saída, incluindo o cache de prompt. Contagem local: não mede a porcentagem da assinatura.')),
         h('p', { class: 'quota-cli' }, 'No terminal, abra ', h('code', {}, help.terminal), ' e use ', h('code', {}, help.command), '.'),
         h('button', { class: 'btn text', type: 'button', 'data-fk': `quota-help-${id}`, onClick: () => { dialog.close(); ctx.openBrowser(help.url); } }, help.label));
     })));

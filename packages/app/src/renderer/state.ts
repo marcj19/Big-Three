@@ -1,4 +1,4 @@
-import type { AccountQuota, Access, ConnectionView, ConversationMeta, MessageView, ModelOption, PendingQuestion, ProviderId, ProviderStatus, RunSpec, StepEventView, UsageView } from '../shared/api.js';
+import type { AccountQuota, Access, PermissionsView, ConnectionView, ConversationMeta, MessageView, ModelOption, PendingQuestion, ProviderId, ProviderStatus, RunSpec, StepEventView, UsageView } from '../shared/api.js';
 import type { IconName } from './icons.js';
 
 export const PROVIDERS: ProviderId[] = ['claude', 'gemini', 'codex'];
@@ -65,6 +65,8 @@ export const state = {
   sending: false,
   accessChanging: false,
   usage: {} as Record<string, UsageView>,
+  /** Web/browser permissions per conversation, as the main process holds them (off until confirmed there). */
+  permissionsOf: {} as Record<string, PermissionsView>,
   /** Plan limits per model (percent used and renewal), as far as each CLI lets the app read them. */
   quotas: [] as AccountQuota[],
   loginOutput: {} as Partial<Record<ProviderId, string[]>>,

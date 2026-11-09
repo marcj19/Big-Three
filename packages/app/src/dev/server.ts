@@ -33,6 +33,8 @@ const service = new AppService({
   emit: broadcast,
   // No native dialog here: writing is refused unless the person started this server saying they accept it.
   confirmAccess: async () => process.env.AIO_DEV_ALLOW_WRITE === '1',
+  // Same rule for the web and the browser: off unless this server was started saying so.
+  confirmPermission: async () => process.env.AIO_DEV_ALLOW_PERMISSIONS === '1',
 });
 
 const tokenOk = (given: string | undefined | null) => {

@@ -180,6 +180,12 @@ modelos podem consultar.
 
 - **Acesso por conversa.** Uma janela nativa confirma cada ampliação de acesso. O processo principal guarda a autorização
   da conversa enquanto o app estiver aberto. A troca de modelo por limite de uso vale apenas em somente leitura.
+- **Permissões de internet e navegador.** O botão **Permissões**, abaixo do campo de texto, tem duas chaves: **Internet**
+  (pesquisar e abrir páginas) e **Navegador** (o Claude controlando o seu Chrome pela extensão *Claude in Chrome*). As duas
+  começam desligadas. Ligar uma pede confirmação numa janela nativa, vale só para aquela conversa e é esquecido quando você
+  fecha o app. Claude e Codex obedecem à Internet; só o Claude tem navegador; a CLI do Gemini não oferece essa chave, e a
+  janela avisa isso. Os colegas consultados herdam a Internet, nunca o navegador. Os conectores do Codex ("apps") ficam
+  desligados, porque trazem uma busca na web própria e agem nas suas contas vinculadas.
 - **Colegas não alteram nada.** Um modelo consultado roda só lendo e não recebe as ferramentas da sala nem as do banco, então as
   perguntas não se multiplicam.
 - **Defesa em camadas no banco:** usuário só com `SELECT` (a camada que importa), um filtro de SQL, transações somente

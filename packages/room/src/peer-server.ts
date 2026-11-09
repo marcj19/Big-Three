@@ -1,11 +1,12 @@
-import type { Adapter, ProviderId } from '@aio/core';
+import type { Adapter, Permissions, ProviderId } from '@aio/core';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { inlineFiles, MAX_FILES } from './peer-files.js';
 import { NAMES } from './prompt.js';
 import type { Team } from './peer-launch.js';
 import { Room } from './room.js';
 import { renderTranscript } from './transcript.js';
-import type { TranscriptStore } from './types.js';
+import type { TranscriptStore, TurnResult } from './types.js';
 import { UsageTracker } from './usage.js';
 import { peerActivityReporter, type PeerActivity } from './peer-activity.js';
 
@@ -25,6 +26,10 @@ export interface PeerServerOptions {
   team?: Team;
   usage?: UsageTracker;
   onActivity?: (event: PeerActivity) => void;
+  /** What the colleagues may reach. Only the lead's web permission is ever passed on. */
+  permissions?: Permissions;
+  /** Called after every consultation with what the colleague used, whatever the outcome. */
+  onConsult?: (consult: { peer: ProviderId; result: TurnResult }) => void;
 }
 
 const MAX_POST_CHARS = 8_000;
@@ -72,9 +77,11 @@ export function createPeerServer(options: PeerServerOptions): McpServer {
       inputSchema: {
         peer: z.enum(peers as [ProviderId, ...ProviderId[]]).describe('Who to ask'),
         question: z.string().min(1).describe('A self-contained question'),
+        files: z.array(z.string().min(1)).max(MAX_FILES).optional()
+          .describe('Project files (paths relative to the project folder) to send along with the question, so the colleague answers from them straight away instead of searching. Use it for the files the question is about.'),
       },
     },
-    async ({ peer, question }: { peer: ProviderId; question: string }, { signal: requestSignal }) => {
+    async ({ peer, question, files }: { peer: ProviderId; question: string; files?: string[] }, { signal: requestSignal }) => {
       const signal = options.signal ? AbortSignal.any([options.signal, requestSignal]) : requestSignal;
       if (signal.aborted) return asError('Consulta cancelada.');
       if (peer === self) return asError('You cannot ask yourself.');
@@ -83,15 +90,20 @@ export function createPeerServer(options: PeerServerOptions): McpServer {
       asks++;
 
       await options.transcript.append({ author: self, text: `(to ${peer}) ${question}` });
-      const result = await room.turn(peer, `${NAMES[self]} asks you: ${question}\nAnswer only that question, briefly.`, {
+      // The files go into this one instruction only, never the shared transcript: they would be re-sent on every turn.
+      const attached = await inlineFiles(options.cwd, files);
+      const result = await room.turn(peer, `${NAMES[self]} asks you: ${question}\nAnswer only that question, briefly.${attached.text}`, {
         access: 'read-only',
+        permissions: options.permissions?.web ? { web: true } : undefined,
         model: options.team?.[peer]?.model || undefined,
         effort: options.team?.[peer]?.effort || undefined,
         timeoutMs: options.askTimeoutMs ?? 180_000,
         signal,
       });
       report?.({ type: 'turn_end', result });
-      return result.status === 'ok' ? asText(result.text)
+      options.onConsult?.({ peer, result });
+      const skipped = attached.skipped.length ? `\n\n(Not sent to ${NAMES[peer]}: ${attached.skipped.join('; ')})` : '';
+      return result.status === 'ok' ? asText(result.text + skipped)
         : result.status === 'cancelled' ? asError('Consulta cancelada.')
           : asError(`${NAMES[peer]} could not answer: ${result.error ?? 'unknown error'}`);
     },

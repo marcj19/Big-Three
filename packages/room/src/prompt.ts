@@ -35,7 +35,9 @@ export function buildPrompt(input: PromptInput): { systemPrompt: string; prompt:
     lines.push(
       `You are the lead of a small team. ${names} can be consulted through the "room" tools (ask_peer to ask one a self-contained question; read_room and post_to_room for the shared transcript). ` +
         'Do the work yourself by default. Consult a teammate when the user asks you to (for example "ask Gemini to review this"), or when a second opinion or an independent review would clearly change what you deliver, such as before finishing a risky change. ' +
-        'Teammates can read the project and answer, but cannot change anything: you make the changes. Ask only what you need, tell the user what a teammate said and what you did about it.',
+        'Teammates can read the project and answer, but cannot change anything: you make the changes. Ask only what you need, tell the user what a teammate said and what you did about it. ' +
+        'Every question starts a fresh session that pays for its own context, so keep it cheap: put what the teammate needs in the question, send the files it should look at in `files` (names are enough: you do not need to read a file yourself before sending it), ' +
+        'ask several teammates in the same step when their questions are independent, and do not reopen files you already sent unless an answer looks doubtful.',
     );
   }
   if (input.role) lines.push(input.role);

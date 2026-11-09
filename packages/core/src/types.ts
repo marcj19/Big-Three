@@ -26,8 +26,22 @@ export interface ModelOption {
   note?: string;
 }
 
+/**
+ * What a model may reach beyond the project folder. Everything is off unless granted: an adapter given nothing
+ * must close the door explicitly, because several CLIs open it by default.
+ */
+export interface Permissions {
+  /** Search the web and open pages. */
+  web?: boolean;
+  /** Drive the person's own browser (Claude in Chrome). Claude only; it acts inside logged-in sessions. */
+  browser?: boolean;
+}
+export type PermissionKey = keyof Permissions;
+
 export interface RunRequest {
   prompt: string;
+  /** Defaults to nothing granted. CLIs that cannot restrict a permission ignore it. */
+  permissions?: Permissions;
   cwd: string;
   /** Defaults to 'read-only'. */
   access?: Access;

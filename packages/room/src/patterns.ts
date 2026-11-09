@@ -1,4 +1,4 @@
-import type { Access, McpServerSpec, ProviderId } from '@aio/core';
+import type { Access, McpServerSpec, Permissions, ProviderId } from '@aio/core';
 import { NAMES } from './prompt.js';
 import type { Room } from './room.js';
 import type { TurnOptions, TurnResult } from './types.js';
@@ -23,6 +23,8 @@ export interface PatternOptions {
   withPeerTools?: boolean;
   /** Extra MCP servers (e.g. the database broker) for models that can take them. */
   mcpServers?: McpServerSpec[];
+  /** What every model in the run may reach beyond the folder (web, browser). Defaults to nothing. */
+  permissions?: Permissions;
 }
 
 type Who = ProviderId | ProviderId[];
@@ -42,7 +44,7 @@ class Run {
   constructor(private readonly room: Room, private readonly opts: PatternOptions) {}
 
   turnOptions(access: Access = 'read-only'): TurnOptions {
-    return { access, cwd: this.opts.cwd, signal: this.opts.signal, timeoutMs: this.opts.timeoutMs, withPeerTools: this.opts.withPeerTools, mcpServers: this.opts.mcpServers };
+    return { access, cwd: this.opts.cwd, signal: this.opts.signal, timeoutMs: this.opts.timeoutMs, withPeerTools: this.opts.withPeerTools, mcpServers: this.opts.mcpServers, permissions: this.opts.permissions };
   }
 
   async turn(who: Who, instruction: string, access?: Access): Promise<TurnResult> {

@@ -1,4 +1,4 @@
-import { ATTACHMENT_COUNT_LIMIT, ATTACHMENT_FILE_LIMIT, ATTACHMENT_TOTAL_LIMIT, type Access, type AttachmentUpload, type ProviderId } from '../shared/api.js';
+import { ATTACHMENT_COUNT_LIMIT, ATTACHMENT_FILE_LIMIT, ATTACHMENT_TOTAL_LIMIT, PERMISSION_KEYS, PERMISSION_SUPPORT, type Access, type AttachmentUpload, type PermissionKey, type PermissionsView, type ProviderId } from '../shared/api.js';
 import { api } from './bridge.js';
 import { messagesEl } from './chat.js';
 import { ctx } from './ctx.js';
@@ -373,6 +373,63 @@ function accessPop(): HTMLElement {
     h('p', { class: 'muted small' }, 'A escolha fica salva nesta conversa no app desktop. Use este seletor para mudar o acesso.'));
 }
 
+// ---------- permissions: what a model may reach beyond the folder ----------
+
+const PERMISSION_META: Record<PermissionKey, { label: string; chip: string; hint: string; risk: string }> = {
+  web: { label: 'Internet', chip: 'Internet', hint: 'Pesquisar na web e abrir páginas.', risk: 'Uma página pode conter instruções escondidas para enganar o modelo.' },
+  browser: { label: 'Navegador (Chrome)', chip: 'Navegador', hint: 'Controlar o seu Chrome, inclusive em sites onde você já está conectado.', risk: 'Exige a extensão Claude in Chrome e age com a sua conta.' },
+};
+const NO_PERMISSIONS: PermissionsView = { web: false, browser: false };
+function currentPermissions(): PermissionsView {
+  const id = state.current?.meta.id;
+  return (id && state.permissionsOf[id]) || NO_PERMISSIONS;
+}
+
+let permissionChanging = false;
+async function changePermission(key: PermissionKey, enabled: boolean, sw: HTMLElement): Promise<void> {
+  if (permissionChanging || state.sending || (state.run && state.run.conversationId === state.current?.meta.id)) return;
+  permissionChanging = true;
+  sw.setAttribute('disabled', '');
+  try {
+    if (!state.current && !(await ctx.newConversation())) return;
+    const id = state.current!.meta.id;
+    state.permissionsOf[id] = await api.setPermission(id, key, enabled);
+    sw.setAttribute('aria-checked', String(state.permissionsOf[id]![key]));
+  } catch (err) {
+    const message = (err as Error).message;
+    toast(message.includes('not confirmed') ? 'A permissão não foi confirmada.' : message, 'error');
+  } finally {
+    permissionChanging = false;
+    sw.removeAttribute('disabled');
+    renderComposer();
+  }
+}
+
+function permissionRow(key: PermissionKey): HTMLElement {
+  const meta = PERMISSION_META[key];
+  const works = PROVIDERS.filter((p) => PERMISSION_SUPPORT[key].includes(p)).map((p) => NAMES[p]);
+  const doesNot = PROVIDERS.filter((p) => !PERMISSION_SUPPORT[key].includes(p)).map((p) => NAMES[p]);
+  const id = `perm-${key}`;
+  const sw = h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(currentPermissions()[key]), 'aria-labelledby': id, 'aria-describedby': `${id}-d` });
+  const flip = () => void changePermission(key, !currentPermissions()[key], sw);
+  sw.addEventListener('click', (e) => { e.stopPropagation(); flip(); });
+  const hint = `${meta.hint} ${meta.risk} Vale para: ${works.join(', ')}.${doesNot.length ? ` ${doesNot.join(' e ')}: a CLI não deixa controlar isto.` : ''}`;
+  return h('div', { class: 'switch-row', onClick: flip }, h('span', {}, h('span', { id }, meta.label), h('small', { id: `${id}-d` }, hint)), sw);
+}
+
+function permissionsPop(): HTMLElement {
+  const lead = state.config.lead.provider;
+  const body = h('div', { class: 'pop-body' }, h('p', { class: 'pop-title' }, 'Permissões nesta conversa'));
+  body.append(h('p', { class: 'muted small' }, 'Tudo começa desligado. Ligar pede a sua confirmação numa janela do sistema, vale só nesta conversa e volta a desligar quando você fecha o app. Os colegas consultados só herdam a internet, nunca o navegador.'));
+  for (const key of PERMISSION_KEYS) {
+    body.append(permissionRow(key));
+    if (currentPermissions()[key] && !PERMISSION_SUPPORT[key].includes(lead)) {
+      body.append(h('p', { class: 'muted small' }, `${NAMES[lead]} não obedece a esta permissão: ela não tem efeito com este líder.`));
+    }
+  }
+  return body;
+}
+
 function teamPop(): HTMLElement {
   const c = state.config;
   const lead = c.lead.provider;
@@ -453,10 +510,15 @@ function renderChips(): void {
     accessPop, 'Acesso', access === 'full' ? 'access-full' : access === 'edit' ? 'warn' : '');
   accessChip.title = accessInfo.label;
 
+  const granted = PERMISSION_KEYS.filter((key) => currentPermissions()[key]);
+  const permissionChip = chip('permissions', [icon('shield', 'sm'), granted.length ? granted.map((key) => PERMISSION_META[key].chip).join(' · ') : 'Permissões'],
+    permissionsPop, 'Permissões', currentPermissions().browser ? 'access-full' : granted.length ? 'warn' : 'muted-chip');
+
   for (const child of Array.from(chipsEl.children)) if (child !== pop) child.remove();
   const chips = [
     chip('model', modelContent, modelPop, 'Modelo'),
     accessChip,
+    permissionChip,
     chip('team', [icon('users', 'sm'), teamText], teamPop, 'Equipe', !teamAvailable || !members.length ? 'muted-chip' : ''),
   ];
   const dbs = state.connections.filter((x) => x.hasPassword);

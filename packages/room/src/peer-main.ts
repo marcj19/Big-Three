@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { assertSafeChoice, createAdapters, type ProviderId } from '@aio/core';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { Team } from './peer-launch.js';
@@ -49,8 +49,14 @@ async function main() {
   }
   process.once('SIGTERM', () => abort.abort());
   process.once('SIGINT', () => abort.abort());
+  const usageFile = process.env.AIO_ROOM_USAGE_FILE;
   const server = createPeerServer({
     team,
+    permissions: process.env.AIO_ROOM_WEB === '1' ? { web: true } : undefined,
+    onConsult: usageFile ? ({ peer, result }) => {
+      // One small append per consultation; a failure to write must never break the answer the lead is waiting for.
+      try { appendFileSync(usageFile, `${JSON.stringify({ peer, status: result.status, usage: result.usage })}\n`); } catch { /* usage is best effort */ }
+    } : undefined,
     onActivity: process.env.AIO_ROOM_ACTIVITY_FILE ? fileActivitySink(process.env.AIO_ROOM_ACTIVITY_FILE) : undefined,
     self,
     signal: abort.signal,

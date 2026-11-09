@@ -1,4 +1,4 @@
-import type { Access, AgentErrorCode, DoneStatus, McpServerSpec, ProviderId, SubagentActivity } from '@aio/core';
+import type { Access, AgentErrorCode, DoneStatus, McpServerSpec, Permissions, ProviderId, SubagentActivity } from '@aio/core';
 
 export type Author = ProviderId | 'user' | 'system';
 export interface RoomAttachment { name: string; path: string }
@@ -55,6 +55,8 @@ export type RoomEvent =
 export interface TurnOptions {
   /** Defaults to 'read-only'. Anything stronger must be asked for explicitly. */
   access?: Access;
+  /** What the model may reach beyond the folder (web, browser). Defaults to nothing. */
+  permissions?: Permissions;
   /** Applies to the first provider tried only: another model's name means nothing to a fallback provider. */
   model?: string;
   effort?: string;

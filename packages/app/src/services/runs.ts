@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import type { Adapter, McpServerSpec, ProviderId, UserQuestion } from '@aio/core';
 import { crossReview, debate, peerActivityReporter, planExecute, Room, runFlow, type FlowStep, type PatternResult, type RoomAttachment, type RoomEvent, type Team, type UsageTracker } from '@aio/room';
-import type { AppEvent, RoomEventView, RunOutcome, StartRun } from '../shared/api.js';
+import type { AppEvent, PermissionsView, RoomEventView, RunOutcome, StartRun } from '../shared/api.js';
 import type { ConversationStore } from './conversations.js';
 import { watchPeerActivity } from './peer-activity.js';
 import type { RunJournal } from './run-journal.js';
@@ -58,7 +61,7 @@ export class RunManager {
   }
 
   /** Starts in the background and returns at once; progress and the result arrive as events. */
-  async start(input: StartRun, cwd: string, allowPreview = false, mobile?: ProviderId): Promise<string> {
+  async start(input: StartRun, cwd: string, allowPreview = false, mobile?: ProviderId, permissions?: PermissionsView): Promise<string> {
     if (!this.canStart(input.conversationId, !!mobile)) throw new RunBusyError();
     const runId = randomUUID();
     const abort = new AbortController();
@@ -68,7 +71,7 @@ export class RunManager {
       const attachments = await this.deps.store.saveAttachments(input.conversationId, uploads ?? []);
       this.deps.journal?.begin(runId, task);
       if (mobile) this.deps.emit({ type: 'mobile_run_started', runId, conversationId: input.conversationId, provider: mobile, prompt: input.prompt });
-      void this.execute(runId, task, cwd, abort, allowPreview, attachments).finally(() => this.active.delete(runId));
+      void this.execute(runId, task, cwd, abort, allowPreview, attachments, permissions).finally(() => this.active.delete(runId));
     } catch (err) {
       this.active.delete(runId);
       throw err;
@@ -163,7 +166,7 @@ export class RunManager {
     return { status: result.status, final: result.text, error: result.error };
   }
 
-  private async execute(runId: string, input: StartRun, cwd: string, abort: AbortController, allowPreview: boolean, attachments: RoomAttachment[]): Promise<void> {
+  private async execute(runId: string, input: StartRun, cwd: string, abort: AbortController, allowPreview: boolean, attachments: RoomAttachment[], permissions?: PermissionsView): Promise<void> {
     const { deps } = this;
     const conversationId = input.conversationId;
     const { spec } = input;
@@ -171,6 +174,8 @@ export class RunManager {
     const adapters = allowed ? Object.fromEntries(Object.entries(deps.adapters).filter(([provider, adapter]) => adapter && allowed.has(provider as ProviderId))) : deps.adapters;
     let outcome: RunOutcome;
     let activity: Awaited<ReturnType<typeof watchPeerActivity>> | undefined;
+    // What the consulted colleagues spend is reported through this file (their server is another process).
+    const usageFile = input.peerTools ? path.join(os.tmpdir(), `aio-consults-${runId}.jsonl`) : undefined;
     const stopPeers = () => { void activity?.cancel(); };
     abort.signal.addEventListener('abort', stopPeers, { once: true });
     let previewUrl: string | undefined;
@@ -209,12 +214,12 @@ export class RunManager {
         },
         onTranscript: (provider) => this.publish({ type: 'transcript', runId, conversationId, provider }),
         onQuestion: (provider, question) => this.ask(runId, provider, question),
-        peerServer: input.peerTools ? { entry: deps.peerEntry, activityFile: activity?.file, leaseFile: activity?.lease,
+        peerServer: input.peerTools ? { entry: deps.peerEntry, activityFile: activity?.file, leaseFile: activity?.lease, usageFile,
           team: input.spec.kind === 'lead' ? teamOf(input.spec.team, input.spec.lead.provider) : undefined } : undefined,
       });
       const db = input.connections.length ? deps.databaseTools(input.connections) : undefined;
       // Desktop tasks can run long commands and are always stoppable from the UI.
-      const common = { cwd, signal: abort.signal, timeoutMs: deps.timeoutMs ?? 0, withPeerTools: input.peerTools, mcpServers: db ? [db] : undefined };
+      const common = { cwd, signal: abort.signal, timeoutMs: deps.timeoutMs ?? 0, withPeerTools: input.peerTools, mcpServers: db ? [db] : undefined, permissions };
       if (spec.kind === 'chat') {
         await room.say(input.prompt, attachments, runId);
         const r = await room.turn(spec.providers, "Answer the user's latest message.", { ...common, access: spec.access });
@@ -252,6 +257,7 @@ export class RunManager {
     if (outcome.status === 'ok') offerPreview(outcome.final, true);
     await previewCheck;
     await activity?.close();
+    if (usageFile) await rm(usageFile, { force: true }).catch(() => {});
     abort.signal.removeEventListener('abort', stopPeers);
     if (abort.signal.aborted) outcome = { status: 'cancelled', final: '' };
     const finished: AppEvent = { type: 'run_done', runId, conversationId, outcome };

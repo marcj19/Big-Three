@@ -196,6 +196,11 @@ describe('ClaudeAdapter', () => {
     ]);
   });
 
+  it('counts prompt-cache tokens as input, because the model processes them every turn', async () => {
+    const events = await collect(new ClaudeAdapter({ command: fake('replay', fixture('claude-cache.jsonl')) }));
+    expect(events.find((e) => e.type === 'usage')).toEqual({ type: 'usage', inputTokens: 3 + 7174 + 15132, outputTokens: 4, costUsd: 0.0316 });
+  });
+
   it('reports the subscription limit window the CLI announces', async () => {
     const events = await collect(new ClaudeAdapter({ command: fake('replay', fixture('claude-limit.jsonl')) }));
     expect(events.find((e) => e.type === 'limit')).toEqual({ type: 'limit', status: 'allowed', window: 'five_hour', resetsAt: 1793733600_000 });
@@ -223,6 +228,33 @@ describe('ClaudeAdapter', () => {
     for (const access of ['read-only', 'edit', 'full'] as const) await collect(new Spy({ command: fake('no-result') }), { access });
     const modes = seen.map((a) => a[a.indexOf('--permission-mode') + 1]);
     expect(modes).toEqual(['plan', 'plan', 'acceptEdits', 'bypassPermissions']);
+  });
+
+  it('keeps the web and the browser closed unless they are granted', async () => {
+    const seen: string[][] = [];
+    class Spy extends ClaudeAdapter {
+      protected override async build(req: RunRequest) {
+        const b = await super.build(req);
+        seen.push(b.args);
+        return b;
+      }
+    }
+    const adapter = new Spy({ command: fake('no-result') });
+    await collect(adapter);
+    await collect(adapter, { permissions: { web: true } });
+    await collect(adapter, { permissions: { browser: true }, mcpServers: [{ name: 'room', command: 'node' }] });
+    const [none, web, browser] = seen as [string[], string[], string[]];
+    expect(none).toContain('--no-chrome');
+    expect(none[none.indexOf('--disallowedTools') + 1]).toBe('WebSearch,WebFetch');
+    expect(none).not.toContain('--allowedTools');
+    expect(web[web.indexOf('--allowedTools') + 1]).toBe('WebSearch,WebFetch');
+    expect(web).not.toContain('--disallowedTools');
+    expect(web).toContain('--no-chrome');
+    // Granting the browser leaves the web closed, and the room server's tools are still pre-approved on their own.
+    expect(browser).toContain('--chrome');
+    expect(browser).not.toContain('--no-chrome');
+    expect(browser[browser.indexOf('--disallowedTools') + 1]).toBe('WebSearch,WebFetch');
+    expect(browser[browser.indexOf('--allowedTools') + 1]).toBe('mcp__room');
   });
 
   it('puts the prompt on stdin and not in the arguments', async () => {
@@ -357,6 +389,25 @@ describe('GeminiAdapter (Antigravity CLI)', () => {
 });
 
 describe('CodexAdapter', () => {
+  it('turns its own web search off unless the web is granted, also when resuming a session', async () => {
+    const seen: string[][] = [];
+    class Spy extends CodexAdapter {
+      protected override build(req: RunRequest) {
+        const b = super.build(req);
+        seen.push(b.args);
+        return b;
+      }
+    }
+    const adapter = new Spy({ command: fake('no-result') });
+    await collect(adapter);
+    await collect(adapter, { permissions: { web: true } });
+    await collect(adapter, { sessionId: 'thr-1' });
+    const value = (args: string[]) => args.filter((a) => a.startsWith('web_search=')).join();
+    expect(seen.map(value)).toEqual(['web_search="disabled"', 'web_search="live"', 'web_search="disabled"']);
+    // The connectors would bring their own web search and act on linked accounts, so they are always off.
+    expect(seen.every((args) => args.includes('features.apps=false'))).toBe(true);
+  });
+
   it('parses a thread with a shell command and a final message', async () => {
     const events = await collect(new CodexAdapter({ command: fake('replay', fixture('codex.jsonl')) }));
     expect(events).toEqual([
