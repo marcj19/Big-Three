@@ -11,6 +11,11 @@ interface ActiveRun {
   conversationId: string;
   abort: AbortController;
   answers: Map<string, (answer: string) => void>;
+  mobile: boolean;
+}
+
+export class RunBusyError extends Error {
+  constructor() { super('A conversation is already running. Wait for it or cancel it.'); }
 }
 
 export interface RunDeps {
@@ -48,16 +53,21 @@ export class RunManager {
     return [...this.active.values()].some((r) => r.conversationId === conversationId);
   }
 
+  canStart(conversationId: string, mobile: boolean): boolean {
+    return mobile ? !this.isBusy() : ![...this.active.values()].some((run) => run.mobile || run.conversationId === conversationId);
+  }
+
   /** Starts in the background and returns at once; progress and the result arrive as events. */
-  async start(input: StartRun, cwd: string, allowPreview = false): Promise<string> {
-    if (this.isBusy(input.conversationId)) throw new Error('This conversation is already running. Wait for it or cancel it.');
+  async start(input: StartRun, cwd: string, allowPreview = false, mobile?: ProviderId): Promise<string> {
+    if (!this.canStart(input.conversationId, !!mobile)) throw new RunBusyError();
     const runId = randomUUID();
     const abort = new AbortController();
-    this.active.set(runId, { conversationId: input.conversationId, abort, answers: new Map() });
+    this.active.set(runId, { conversationId: input.conversationId, abort, answers: new Map(), mobile: !!mobile });
     try {
       const { attachments: uploads, ...task } = input;
       const attachments = await this.deps.store.saveAttachments(input.conversationId, uploads ?? []);
       this.deps.journal?.begin(runId, task);
+      if (mobile) this.deps.emit({ type: 'mobile_run_started', runId, conversationId: input.conversationId, provider: mobile, prompt: input.prompt });
       void this.execute(runId, task, cwd, abort, allowPreview, attachments).finally(() => this.active.delete(runId));
     } catch (err) {
       this.active.delete(runId);

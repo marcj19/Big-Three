@@ -23,13 +23,16 @@ import type {
 } from '../shared/api.js';
 import { ConnectionService } from './connections.js';
 import { ConversationStore } from './conversations.js';
-import { RunManager } from './runs.js';
+import { RunBusyError, RunManager } from './runs.js';
 import { RunJournal } from './run-journal.js';
 import { workspaceDirectory, workspaceFile } from './workspace.js';
 import { gitDiff, gitStatus } from './git.js';
 import { browserUrl } from '../shared/browser-url.js';
 import type { BrowserBounds, BrowserState } from '../shared/api.js';
 import { ATTACHMENT_COUNT_LIMIT, ATTACHMENT_FILE_LIMIT, ATTACHMENT_ONLY_PROMPT } from '../shared/api.js';
+import { mobilePromptRun, type MobilePrompt } from '../shared/mobile.js';
+import { mobileOffice } from '../shared/mobile-office.js';
+import { timelineEntries } from '../shared/work-trace.js';
 
 export interface AccessRequest {
   access: Exclude<Access, 'read-only'>;
@@ -91,6 +94,7 @@ const runSchema = z.object({
 });
 
 const RANK: Record<Access, number> = { 'read-only': 0, edit: 1, full: 2 };
+class MobilePermissionError extends Error {}
 /** The most any model in this run may do to your files. */
 const writeAccess = (spec: StartRun['spec']): Access =>
   spec.kind === 'chat' || spec.kind === 'lead'
@@ -183,7 +187,9 @@ export class AppService implements Api {
   }
   async runHistory(conversationId: string) { await this.store.get(z.string().parse(conversationId)); return this.journal.list(conversationId); }
   async mobileConversations() {
-    return { conversations: (await this.store.list()).slice(0, 100).map(({ id, title, updatedAt }) => ({ id, title, updatedAt, running: this.runs.isBusy(id) })) };
+    const conversations = await this.store.list();
+    return { conversations: conversations.slice(0, 100).map(({ id, title, updatedAt }) => ({ id, title, updatedAt, running: this.runs.isBusy(id) })),
+      office: mobileOffice(this.journal.activeRuns(), new Map(conversations.map(({ id, title }) => [id, title]))) };
   }
 
   async mobileConversation(id: string) {
@@ -191,8 +197,19 @@ export class AppService implements Api {
     if (!meta) return undefined;
     const [messages, history] = await Promise.all([this.store.messages(id), this.journal.list(id, 1)]);
     const run = history[0];
-    return { title: meta.title, messages: messages.slice(-30).map(({ author, at, text }) => ({ author, at, text: text.slice(0, 10_000) })),
-      activity: run ? { status: run.status, entries: run.entries.slice(-18).map(({ at, label, provider, peer, status }) => ({ at, label, provider, peer, status })) } : null };
+    return { title: meta.title, busy: this.runs.isBusy(), messages: messages.slice(-30).map(({ author, at, text }) => ({ author, at, text: text.slice(0, 10_000) })),
+      activity: run ? { status: run.status, entries: timelineEntries(run).slice(-18).map(({ at, kind, label, provider, peer, status }) => ({ at, kind, label, provider, peer, status })) } : null };
+  }
+
+  async mobileStartPrompt(prompt: MobilePrompt, authorized: () => boolean) {
+    try {
+      const result = await this.launchRun(mobilePromptRun(prompt), { provider: prompt.provider, authorized });
+      return { status: 202, data: result };
+    } catch (error) {
+      if (error instanceof MobilePermissionError) return { status: 403, message: 'O envio pelo celular foi desativado no PC.' };
+      if (error instanceof RunBusyError) return { status: 409, message: 'Aguarde a execução que já está em andamento no PC.' };
+      return { status: 422, message: 'Não foi possível iniciar a solicitação. Confira a conversa e o modelo no PC.' };
+    }
   }
   async browserState(): Promise<BrowserState> { return this.options.browser?.state() ?? { supported: false, url: '', title: '', loading: false, canBack: false, canForward: false }; }
   async browserNavigate(url: string): Promise<void> {
@@ -342,12 +359,16 @@ export class AppService implements Api {
   }
 
   async startRun(raw: StartRun): Promise<{ runId: string }> {
+    return this.launchRun(raw);
+  }
+
+  private async launchRun(raw: StartRun, mobile?: { provider: ProviderId; authorized: () => boolean }): Promise<{ runId: string }> {
     const input = runSchema.parse(raw) as StartRun;
     if (!input.prompt && !input.attachments?.length) throw new Error('Write something first');
     if (input.attachments?.length && input.spec.kind !== 'lead' && input.spec.kind !== 'chat') throw new Error('Anexos estão disponíveis no chat.');
     input.prompt ||= ATTACHMENT_ONLY_PROMPT;
     const meta = await this.store.get(input.conversationId);
-    if (this.runs.isBusy(meta.id)) throw new Error('This conversation is already running. Wait for it or cancel it.');
+    if (!this.runs.canStart(meta.id, !!mobile)) throw new RunBusyError();
     if (!(await stat(meta.cwd).then((s) => s.isDirectory(), () => false))) throw new Error('The conversation folder no longer exists');
 
     const missing = providersOf(input.spec).filter((p) => !this.adapters[p]);
@@ -372,7 +393,8 @@ export class AppService implements Api {
               : `${providersOf(input.spec).join(', ')} may act`);
     }
     if (this.options.updates?.state().phase === 'installing') throw new Error('O Big Three está reiniciando para atualizar.');
-    return { runId: await this.runs.start(input, meta.cwd, level !== 'read-only') };
+    if (mobile && !mobile.authorized()) throw new MobilePermissionError();
+    return { runId: await this.runs.start(input, meta.cwd, level !== 'read-only', mobile?.provider) };
   }
 
   async cancelRun(runId: string): Promise<void> {

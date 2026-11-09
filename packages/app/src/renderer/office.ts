@@ -127,10 +127,10 @@ export function renderOffice(): void {
   );
 }
 
-export function startOfficeRun(conversationId: string, runId: string): void {
+export function startOfficeRun(conversationId: string, runId: string, lead = state.config.lead.provider): void {
   activities = {};
   for (const id of PROVIDERS) { delete notes[id]; delete failures[id]; delete lastStatuses[id]; delete expires[id]; }
-  activities[state.config.lead.provider] = 'thinking';
+  activities[lead] = 'thinking';
   activityConversation = conversationId;
   activityRunId = runId;
   renderOffice();

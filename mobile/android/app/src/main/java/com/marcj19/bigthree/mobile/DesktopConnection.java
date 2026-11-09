@@ -47,6 +47,10 @@ final class DesktopConnection {
         Offline() { super("O computador está offline ou ainda não respondeu. Abra o Big Three no PC."); }
     }
 
+    static final class PromptRefused extends IOException {
+        PromptRefused(String message) { super(message); }
+    }
+
     DesktopConnection(Context context) {
         prefs = context.getSharedPreferences("desktop-connection", Context.MODE_PRIVATE);
     }
@@ -84,22 +88,34 @@ final class DesktopConnection {
     void forget() { prefs.edit().remove("session").remove("endpoint").apply(); }
 
     Snapshot read(Session session, String conversation, String etag) throws Exception {
-        String exchange = UUID.randomUUID().toString();
         JSONObject input = new JSONObject();
         if (conversation != null) input.put("conversationId", conversation);
         if (etag != null) input.put("etag", etag);
-        byte[] nonce = random(IV_LENGTH);
-        Cipher encrypt = cipher(session.key(), exchange, "read", nonce, Cipher.ENCRYPT_MODE);
-        String payload = Base64.encodeToString(append(nonce, encrypt.doFinal(utf8(input.toString()))), B64);
-        JSONObject reply = request("/sessions/" + session.id() + "/read", session.credential(), new JSONObject().put("exchange", exchange).put("payload", payload));
-        byte[] response = Base64.decode(reply.getString("payload"), B64);
-        if (response.length < 28) throw new IOException("Resposta inválida do computador.");
-        Cipher decrypt = cipher(session.key(), exchange, "reply", Arrays.copyOf(response, IV_LENGTH), Cipher.DECRYPT_MODE);
-        JSONObject data = new JSONObject(new String(decrypt.doFinal(response, IV_LENGTH, response.length - IV_LENGTH), StandardCharsets.UTF_8));
+        JSONObject data = exchange(session, UUID.randomUUID().toString(), input);
         if (data.optInt("status") == 304 && etag != null) return new Snapshot(null, etag);
         if (data.optInt("status") == 404) throw new IllegalArgumentException("Esta conversa não está mais disponível no PC.");
         if (data.optInt("status") != 200) throw new IOException("Não foi possível consultar o computador.");
         return new Snapshot(data.getJSONObject("data"), data.getString("etag"));
+    }
+
+    void sendPrompt(Session session, String conversation, String permit, String provider, String prompt, String exchange) throws Exception {
+        JSONObject input = new JSONObject().put("op", "prompt").put("conversationId", conversation)
+            .put("permit", permit).put("provider", provider).put("prompt", prompt);
+        JSONObject result = exchange(session, exchange, input);
+        if (result.optInt("status") != 202) throw new PromptRefused(result.optString("message", "O PC não aceitou o prompt."));
+    }
+
+    private static JSONObject exchange(Session session, String exchange, JSONObject input) throws Exception {
+        byte[] nonce = random(IV_LENGTH);
+        Cipher encrypt = cipher(session.key(), exchange, "read", nonce, Cipher.ENCRYPT_MODE);
+        String payload = Base64.encodeToString(append(nonce, encrypt.doFinal(utf8(input.toString()))), B64);
+        JSONObject packet = new JSONObject().put("exchange", exchange).put("payload", payload);
+        if (utf8(packet.toString()).length > 4096) throw new IllegalArgumentException("O texto ficou grande demais. Encurte o prompt e tente novamente.");
+        JSONObject reply = request("/sessions/" + session.id() + "/read", session.credential(), packet);
+        byte[] response = Base64.decode(reply.getString("payload"), B64);
+        if (response.length < 28) throw new IOException("Resposta inválida do computador.");
+        Cipher decrypt = cipher(session.key(), exchange, "reply", Arrays.copyOf(response, IV_LENGTH), Cipher.DECRYPT_MODE);
+        return new JSONObject(new String(decrypt.doFinal(response, IV_LENGTH, response.length - IV_LENGTH), StandardCharsets.UTF_8));
     }
 
     private static JSONObject request(String route, String credential, JSONObject json) throws Exception {

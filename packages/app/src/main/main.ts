@@ -94,7 +94,7 @@ ipcMain.handle('aio:writeClipboardText', (event, text: unknown) => {
 });
 
 ipcMain.handle('aio:mobileAccess', (event, command: unknown) => {
-  if (!fromOurPage(event) || (command !== undefined && command !== 'pair' && command !== 'stop')) throw new Error('Acesso pelo celular indisponível.');
+  if (!fromOurPage(event) || (command !== undefined && command !== 'pair' && command !== 'stop' && command !== 'allow-prompts' && command !== 'block-prompts')) throw new Error('Acesso pelo celular indisponível.');
   return mobile.manage(command);
 });
 

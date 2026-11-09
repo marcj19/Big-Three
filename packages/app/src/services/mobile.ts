@@ -7,9 +7,14 @@ import type { AppService } from './app-service.js';
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const token = z.string().regex(TOKEN);
 const exchangeId = z.string().uuid();
-const request = z.object({ conversationId: z.string().uuid().optional(), etag: token.optional() }).strict();
-const storedSession = z.object({ id: token, writer: token, key: token });
+const readRequest = z.object({ conversationId: z.string().uuid().optional(), etag: token.optional() }).strict();
+const promptRequest = z.object({ op: z.literal('prompt'), permit: token, conversationId: z.string().uuid(),
+  provider: z.enum(['claude', 'gemini', 'codex']), prompt: z.string().trim().min(1).max(2000) }).strict();
+const request = z.union([readRequest, promptRequest]);
+const storedSession = z.object({ id: token, writer: token, key: token, allowPrompts: z.boolean().optional() });
 export type CompanionSession = z.infer<typeof storedSession>;
+type PromptReply = Awaited<ReturnType<AppService['mobileStartPrompt']>>;
+type Reply = { status: number; etag?: string; data?: unknown; message?: string };
 const nextResponse = z.object({ paired: z.boolean(), request: z.object({ id: exchangeId, payload: z.string().max(4096) }).optional() });
 
 const secret = () => randomBytes(32).toString('base64url');
@@ -53,16 +58,18 @@ export class MobileGateway {
   private paired = false;
   private error?: string;
   private poll?: AbortController;
+  private promptPermit?: string;
+  private lastPrompt?: { id: string; permit: string; response: PromptReply };
   private commands = Promise.resolve();
   private readonly relay: string;
 
-  constructor(private readonly app: Pick<AppService, 'mobileConversations' | 'mobileConversation'>, private readonly options: MobileOptions = {}) {
+  constructor(private readonly app: Pick<AppService, 'mobileConversations' | 'mobileConversation' | 'mobileStartPrompt'>, private readonly options: MobileOptions = {}) {
     this.relay = options.relayUrl ?? MOBILE_RELAY;
   }
 
   state(): MobileAccessState {
     const pairing = this.pairing && this.pairing.expiresAt > Date.now() ? this.pairing : undefined;
-    return { enabled: !!this.session, paired: this.paired, error: this.error, pairing };
+    return { enabled: !!this.session, paired: this.paired, allowPrompts: !!this.promptPermit, error: this.error, pairing };
   }
 
   async restore(): Promise<void> {
@@ -74,7 +81,7 @@ export class MobileGateway {
     if (!command) return Promise.resolve(this.state());
     const result = this.commands.then(async () => {
       if (command === 'pair') await this.register();
-      else {
+      else if (command === 'stop') {
         const previous = this.session;
         await this.options.save?.(undefined);
         this.shutdown();
@@ -82,7 +89,14 @@ export class MobileGateway {
         this.pairing = undefined;
         this.paired = false;
         this.error = undefined;
+        this.setPromptPermit(false);
         if (previous) await this.revoke(previous);
+      } else if (this.session && this.paired) {
+        const allowPrompts = command === 'allow-prompts';
+        const next = { ...this.session, allowPrompts };
+        await this.options.save?.(next);
+        this.session = next;
+        this.setPromptPermit(allowPrompts);
       }
       return this.state();
     });
@@ -91,6 +105,11 @@ export class MobileGateway {
   }
 
   shutdown(): void { this.poll?.abort(); this.poll = undefined; }
+
+  private setPromptPermit(enabled: boolean): void {
+    this.promptPermit = enabled ? secret() : undefined;
+    this.lastPrompt = undefined;
+  }
 
   private async register(): Promise<void> {
     const code = secret();
@@ -120,6 +139,7 @@ export class MobileGateway {
     this.session = session;
     this.paired = false;
     this.error = undefined;
+    this.setPromptPermit(!!session.allowPrompts);
     const controller = new AbortController();
     this.poll = controller;
     void this.run(session, controller.signal);
@@ -140,6 +160,7 @@ export class MobileGateway {
         if (error instanceof RelayError && error.status === 401) {
           this.paired = false;
           this.pairing = undefined;
+          this.setPromptPermit(false);
           this.error = 'O pareamento expirou. Gere um novo token.';
           return;
         }
@@ -150,17 +171,34 @@ export class MobileGateway {
   }
 
   private async reply(session: CompanionSession, item: { id: string; payload: string }, signal: AbortSignal): Promise<void> {
-    let response: { status: number; etag?: string; data?: unknown } = { status: 400 };
+    let response: Reply = { status: 400 };
     try {
       const input = request.parse(open(session.key, item.id, 'read', item.payload));
-      const data = input.conversationId ? await this.app.mobileConversation(input.conversationId) : await this.app.mobileConversations();
-      const etag = data === undefined ? undefined : mobileHash(JSON.stringify(data));
-      response = data === undefined ? { status: 404 } : etag === input.etag ? { status: 304, etag } : { status: 200, etag, data };
+      if ('op' in input) response = await this.submit(input, item.id, signal);
+      else {
+        const detail = input.conversationId ? await this.app.mobileConversation(input.conversationId) : undefined;
+        const data = input.conversationId ? detail && { ...detail, promptPermit: this.promptPermit } : await this.app.mobileConversations();
+        const etag = data === undefined ? undefined : mobileHash(JSON.stringify(data));
+        response = data === undefined ? { status: 404 } : etag === input.etag ? { status: 304, etag } : { status: 200, etag, data };
+      }
     } catch { /* A corrupted request receives no conversation data. */ }
     const payload = seal(session.key, item.id, 'reply', JSON.stringify(response));
     await this.call(`/sessions/${session.id}/reply`, session.writer, 'POST', { exchange: item.id, payload }, signal).catch((error) => {
       if (!(error instanceof RelayError) || error.status !== 404) throw error;
     });
+  }
+
+  private async submit(input: z.infer<typeof promptRequest>, id: string, signal: AbortSignal): Promise<Reply> {
+    if (!this.promptPermit || signal.aborted) return { status: 403, message: 'Ative o envio de prompts no Big Three do PC.' };
+    if (this.lastPrompt?.id === id && this.lastPrompt.permit === input.permit) return this.lastPrompt.response;
+    if (input.permit !== this.promptPermit) return { status: 409, message: 'Atualize a conversa antes de enviar de novo.' };
+    // Consume before starting a run. Each restart or permission change invalidates old requests.
+    const nextPermit = secret();
+    this.promptPermit = nextPermit;
+    const authorized = () => !signal.aborted && this.promptPermit === nextPermit;
+    const response = await this.app.mobileStartPrompt(input, authorized);
+    if (authorized()) this.lastPrompt = { id, permit: input.permit, response };
+    return response;
   }
 
   private async call(path: string, credential: string, method: string, body?: object, signal?: AbortSignal): Promise<unknown> {

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-<!--office-hash-->'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+  <title>Escritório Big Three</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; font: 500 13px system-ui, sans-serif; color: #26364a; }
+    #room { position: fixed; inset: 0; overflow: hidden; background: radial-gradient(ellipse at 52% 32%, #f9f5eb, #e4eee9 75%); }
+    canvas { position: absolute; inset: 0; display: block; }
+    #fallback { position: absolute; inset: 0; display: flex; gap: 5vw; align-items: center; justify-content: center; pointer-events: none; }
+    #room.ready #fallback { display: none; }
+    .pet { display: grid; width: 23vw; justify-items: center; gap: 10px; color: #33465c; }
+    .face { width: 70%; aspect-ratio: 1; background: #e89166; border-radius: 45%; box-shadow: inset 0 -7px #0001; position: relative; }
+    .face::before { position: absolute; content: ''; width: 6%; height: 13%; background: #26364a; top: 47%; left: 33%; border-radius: 50%; box-shadow: 20px 0 #26364a; }
+    .pet[data-agent="gemini"] .face { background: #9692f4; border-radius: 35% 55% 40% 50%; }
+    .pet[data-agent="codex"] .face { background: #65c8af; border-radius: 28%; }
+    .pet[data-active="true"] .face { animation: work 1.3s ease-in-out infinite alternate; }
+    @keyframes work { to { transform: translateY(-5px) rotate(-4deg); } }
+    @media (prefers-reduced-motion: reduce) { .face { animation: none !important; } }
+    .badge { position: absolute; z-index: 1; transform: translate(-50%, -28%); padding: 3px 7px; border-radius: 6px;
+      background: #fffffff0; color: #23364b; font-size: 10px; font-weight: 650; pointer-events: none; }
+    .badge[data-active="true"] { background: #e3f3eb; color: #19573d; }
+    .badge[hidden] { display: none; }
+    body[data-paused="true"] .face { animation-play-state: paused; }
+  </style>
+</head>
+<body>
+  <div id="room" aria-label="Escritório da equipe">
+    <div id="fallback">
+      <div class="pet" data-agent="claude"><span class="face"></span>Claude</div>
+      <div class="pet" data-agent="gemini"><span class="face"></span>Gemini</div>
+      <div class="pet" data-agent="codex"><span class="face"></span>Codex</div>
+    </div>
+  </div>
+  <script><!--office-script--></script>
+</body>
+</html>

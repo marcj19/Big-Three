@@ -1,4 +1,5 @@
-import { ATTACHMENT_ONLY_PROMPT, type AppEvent, type ProviderId } from '../shared/api.js';
+import { ATTACHMENT_ONLY_PROMPT, type AppEvent, type ProviderId, type StartRun } from '../shared/api.js';
+import { mobilePromptRun } from '../shared/mobile.js';
 import { api, onEvent } from './bridge.js';
 import { messagesEl, renameChat, renderMessages, renderTopbar, runAnnouncement, runHeaderEl, scrollToEnd, topbarEl } from './chat.js';
 import { clearDraftFiles, composerEl, draftFiles, draftKey, encodeAttachment, focusComposer, promptEl, renderComposer, setPrompt } from './composer.js';
@@ -218,6 +219,13 @@ async function createConversationFlow(): Promise<boolean> {
 
 let starting: { conversationId: string; events: AppEvent[] } | undefined;
 
+function showRun(runId: string, input: StartRun, lead: ProviderId): void {
+  const { conversationId } = input;
+  state.run = { runId, conversationId, lead, live: [], questions: [], activePeers: new Set() };
+  startHarnessRun(runId, input);
+  startOfficeRun(conversationId, runId, lead);
+}
+
 async function send(): Promise<void> {
   if (state.run || state.sending || state.accessChanging) return;
   const text = promptEl.value.trim();
@@ -246,9 +254,7 @@ async function send(): Promise<void> {
     if (state.pending?.conversationId === conversationId) state.pending.message.runId = runId;
     clearDraftFiles(key);
     starting = undefined;
-    state.run = { runId, conversationId, lead, live: [], questions: [], activePeers: new Set() };
-    startHarnessRun(runId, input);
-    startOfficeRun(conversationId, runId);
+    showRun(runId, input, lead);
     for (const event of request.events) onAppEvent(event);
     void refreshTranscript(conversationId);
   } catch (err) {
@@ -289,7 +295,19 @@ async function stopRun(runId: string): Promise<void> {
 
 function onAppEvent(ev: AppEvent): void {
   if (ev.type === 'update') return onUpdate(ev.state);
-  if ('runId' in ev && starting?.conversationId === ev.conversationId) {
+  if (ev.type === 'mobile_run_started') {
+    const current = state.current;
+    if (current?.meta.id === ev.conversationId && !state.pending) {
+      state.pending = { conversationId: ev.conversationId, lead: ev.provider, message: {
+        index: (current.messages.at(-1)?.index ?? 0) + 1, author: 'user', text: ev.prompt, at: new Date().toISOString(), runId: ev.runId,
+      } };
+    }
+    showRun(ev.runId, mobilePromptRun(ev), ev.provider);
+    renderComposer();
+    renderMessages();
+    return;
+  }
+  if ('runId' in ev && starting?.conversationId === ev.conversationId && ev.runId !== state.run?.runId) {
     starting.events.push(ev);
     return;
   }

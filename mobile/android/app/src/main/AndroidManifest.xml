@@ -6,7 +6,7 @@
         android:dataExtractionRules="@xml/backup_rules"
         android:icon="@drawable/big_three"
         android:label="Big Three"
-        android:theme="@android:style/Theme.Material.NoActionBar"
+        android:theme="@style/BigThreeTheme"
         android:usesCleartextTraffic="false">
         <activity android:name=".MainActivity" android:exported="true" android:enableOnBackInvokedCallback="true">
             <intent-filter>

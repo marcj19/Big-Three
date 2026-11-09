@@ -30,6 +30,9 @@ export function openMobileAccess(): void {
         h('button', { class: 'btn', type: 'button', 'data-fk': 'mobile-copy', onClick: () => void writeClipboardText(pairing.code)
           .then(() => toast('Token copiado.')).catch(() => toast('Selecione o token para copiar.', 'error')) }, 'Copiar token')) : '',
       pairing ? h('p', { class: 'muted small' }, 'Abra o Big Three no Android e cole este token. O aplicativo se conecta ao servidor automaticamente.') : '',
+      state.paired ? h('div', { class: 'mobile-pair' }, h('p', {}, state.allowPrompts ? 'O Android pode enviar prompts em somente leitura.' : 'O Android pode acompanhar as conversas.'),
+        h('button', { class: 'btn', type: 'button', 'data-fk': 'mobile-prompts', 'aria-pressed': String(state.allowPrompts),
+          onClick: () => void load(state.allowPrompts ? 'block-prompts' : 'allow-prompts') }, 'Permitir envio de prompts')) : '',
       h('div', { class: 'row-end' },
         state.enabled ? h('button', { class: 'btn', type: 'button', 'data-fk': 'mobile-stop', onClick: () => void load('stop') }, 'Desativar acesso') : '',
         h('button', { class: 'btn primary', type: 'button', 'data-fk': 'mobile-pair', onClick: () => void load('pair') }, pairing || state.paired ? 'Gerar novo token' : 'Gerar token')),

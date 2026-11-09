@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <color name="mobile_background">#F4F6FA</color>
+    <color name="mobile_surface">#FFFFFF</color>
+    <color name="mobile_outline">#DDE4EF</color>
+    <color name="mobile_text">#17263A</color>
+    <color name="mobile_muted">#526278</color>
+    <color name="mobile_accent">#255DC6</color>
+    <color name="mobile_accent_surface">#E8EFFC</color>
+    <color name="mobile_accent_text">#194A9F</color>
+    <color name="mobile_good">#197553</color>
+    <color name="mobile_bad">#A72E36</color>
+    <style name="BigThreeTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/mobile_accent</item>
+        <item name="android:windowBackground">@color/mobile_background</item>
+        <item name="android:statusBarColor">@color/mobile_surface</item>
+        <item name="android:navigationBarColor">@color/mobile_surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+    </style>
+</resources>

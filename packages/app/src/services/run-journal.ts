@@ -19,6 +19,9 @@ export class RunJournal {
   constructor(private readonly dir: string) {}
   begin(id: string, input: StartRun): void { this.records.set(id, newRunRecord(id, input)); }
   event(id: string, event: AppEvent): void { const record = this.records.get(id); if (record) recordWork(record, event); }
+  activeRuns(): RunRecord[] {
+    return [...this.records.values()].filter((record) => record.status === 'running').reverse();
+  }
   async save(id: string): Promise<void> {
     const record = this.records.get(id);
     if (!record) return;

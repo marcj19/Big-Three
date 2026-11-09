@@ -185,6 +185,7 @@ export type AppEvent =
   | { type: 'update'; state: UpdateState }
   | { type: 'browser'; state: BrowserState }
   | { type: 'login'; provider: ProviderId; event: LoginEventView }
+  | { type: 'mobile_run_started'; runId: string; conversationId: string; provider: ProviderId; prompt: string }
   | ({ type: 'peer_activity'; runId: string; conversationId: string } & PeerActivity)
   | { type: 'room'; runId: string; conversationId: string; event: RoomEventView }
   | { type: 'step'; runId: string; conversationId: string; step: StepEventView }

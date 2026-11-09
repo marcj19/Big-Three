@@ -59,6 +59,11 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
       - name: Check runner Android SDK
         run: |
           test -f "$ANDROID_HOME/platforms/android-36/android.jar"

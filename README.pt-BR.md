@@ -131,14 +131,18 @@ finalizadas são persistidas; isso não recupera uma execução interrompida por
 
 ### Acompanhamento pelo Android
 
-O aplicativo Android acompanha as conversas recentes e as etapas das execuções do Big Three Desktop em somente leitura. A atividade é atualizada a cada quatro segundos enquanto o APK estiver aberto. Baixe pelo botão **Acesso pelo celular → Baixar APK para Android** no desktop ou pelo [APK oficial da última release](https://github.com/marcj19/Big-Three/releases/latest/download/Big-Three-Android.apk).
+O aplicativo Android acompanha as conversas recentes e as etapas das execuções do Big Three Desktop. A atividade é atualizada a cada quatro segundos enquanto o APK estiver aberto. Baixe pelo botão **Acesso pelo celular → Baixar APK para Android** no desktop ou pelo [APK oficial da última release](https://github.com/marcj19/Big-Three/releases/latest/download/Big-Three-Android.apk).
 
 1. No Big Three Desktop, abra **Acesso pelo celular → Gerar token**.
 2. No Android, cole o token. Ele expira em cinco minutos e só pode ser usado uma vez.
 
+Para enviar prompts, ative **Permitir envio de prompts** no menu **Acesso pelo celular** do PC depois de parear. No Android, abra uma conversa, toque em **Escrever prompt** e escolha o modelo. A IA roda no PC com o modo **Somente leitura**, mesmo se a conversa estiver configurada para acesso total no desktop. Essa autorização vale para o aparelho pareado.
+
+Abra a aba **Escritório** no Android para ver os personagens 3D e a atividade atual de cada IA. Toque em uma atividade para abrir a conversa correspondente. Em aparelhos sem suporte ao 3D, o escritório mostra os personagens em uma vista simplificada.
+
 O PC precisa estar ligado, com o Big Three aberto, para acompanhar o trabalho. O pareamento é retomado ao reabrir o desktop. **Desativar acesso** revoga a conexão. Os dispositivos usam o servidor do Big Three por HTTPS, e o conteúdo é criptografado no PC e aberto no Android com uma chave derivada do token. O servidor guarda o registro do pareamento. As conversas continuam no PC.
 
-Para compilar localmente, configure `ANDROID_HOME` com o caminho do Android SDK, com a plataforma API 36 instalada, e rode `mobile\android\gradlew.bat -p mobile/android :app:assembleDebug` na raiz do projeto. O APK de teste é gerado em `mobile/android/app/build/outputs/apk/debug/app-debug.apk`.
+Para compilar localmente, instale as dependências do projeto com `npm ci`, configure `ANDROID_HOME` com o caminho do Android SDK, com a plataforma API 36 instalada, e rode `mobile\android\gradlew.bat -p mobile/android :app:assembleDebug` na raiz do projeto. O APK de teste é gerado em `mobile/android/app/build/outputs/apk/debug/app-debug.apk`.
 
 ### Escritório 3D (opcional)
 

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mobile_background">#111722</color>
+    <color name="mobile_surface">#1A2432</color>
+    <color name="mobile_outline">#314053</color>
+    <color name="mobile_text">#F2F5FA</color>
+    <color name="mobile_muted">#B1BED0</color>
+    <color name="mobile_accent">#356CD4</color>
+    <color name="mobile_accent_surface">#223C68</color>
+    <color name="mobile_accent_text">#A8CAFF</color>
+    <color name="mobile_good">#79D8AD</color>
+    <color name="mobile_bad">#FFA7A9</color>
+    <style name="BigThreeTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/mobile_accent_text</item>
+        <item name="android:windowBackground">@color/mobile_background</item>
+        <item name="android:statusBarColor">@color/mobile_surface</item>
+        <item name="android:navigationBarColor">@color/mobile_surface</item>
+    </style>
+</resources>

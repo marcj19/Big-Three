@@ -32,3 +32,16 @@ tasks.register('copyBrand', Copy) {
     rename { 'big_three.png' }
 }
 tasks.named('preBuild') { dependsOn 'copyBrand' }
+
+def officeSource = rootProject.file('office')
+def officeAssets = layout.buildDirectory.dir('generated/office')
+android.sourceSets.main.assets.srcDir(officeAssets)
+tasks.register('buildOffice', Exec) {
+    inputs.dir officeSource
+    inputs.dir rootProject.file('../../packages/app/src/renderer')
+    inputs.dir rootProject.file('../../packages/app/src/shared')
+    inputs.file rootProject.file('../../package-lock.json')
+    outputs.dir officeAssets
+    commandLine 'node', new File(officeSource, 'build.mjs').absolutePath, officeAssets.get().asFile.absolutePath
+}
+tasks.named('preBuild') { dependsOn 'buildOffice' }

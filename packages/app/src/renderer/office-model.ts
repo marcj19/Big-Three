@@ -1,21 +1,10 @@
 import type { AppEvent, ProviderId, ProviderStatus } from '../shared/api.js';
+import { toolActivity, type Activity } from '../shared/office-activity.js';
 
-export type Activity = 'thinking' | 'writing' | 'tool' | 'reading' | 'editing' | 'terminal' | 'searching' | 'database' | 'consulting' | 'reviewing' | 'done' | 'error' | 'cancelled' | 'limited';
+export { toolActivity, type Activity };
 export type Activities = Partial<Record<ProviderId, Activity>>;
 export type OfficeStatus = Activity | 'checking' | 'offline' | 'signed-out' | 'away' | 'idle';
 export const ACTIVE_ACTIVITIES: readonly string[] = ['thinking', 'writing', 'tool', 'reading', 'editing', 'terminal', 'searching', 'database', 'consulting', 'reviewing'];
-
-/** Describes only the observed tool name; never guesses from private prompt or argument contents. */
-export function toolActivity(name: string): Activity {
-  const tool = name.toLowerCase();
-  if (/ask_peer/.test(tool)) return 'consulting';
-  if (/query|sql|schema|database|list_tables/.test(tool)) return 'database';
-  if (/apply_patch|write_file|edit_file|multiedit|(^|__|\.)edit$|(^|__|\.)write$/.test(tool)) return 'editing';
-  if (/web.?search|web.?fetch|search|grep|glob/.test(tool)) return 'searching';
-  if (/read_file|read_room|(^|__|\.)read$|open_file|view_file|list_directory/.test(tool)) return 'reading';
-  if (/exec_command|shell|terminal|bash|run_command/.test(tool)) return 'terminal';
-  return 'tool';
-}
 
 /** Visual state only: never starts a model, changes access, or changes the team. */
 export function nextActivities(current: Activities, event: AppEvent): Activities {
